@@ -15,12 +15,7 @@ import (
 // 48 bytes for P-384. The caller owns it and applies the application's KDF.
 // ECDH does not prove that the slot's key matches the bound public key.
 //
-// The optional authentication source runs before the operation gate. Its VERIFY
-// request and GENERAL AUTHENTICATE then run as one workflow. A nil source sends
-// no VERIFY. On a successful source return, ECDH owns and clears its Data before
-// returning, including when waiting for the operation is canceled. Source errors
-// leave ownership with the source. No authentication state is cached or retried.
-// A completed result is preserved after concurrent context cancellation.
+// Authentication follows [AuthenticationSource].
 func (key *PrivateKey) ECDH(
 	ctx context.Context,
 	peer *ecdh.PublicKey,

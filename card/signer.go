@@ -14,15 +14,10 @@ type signer struct {
 
 var _ crypto.Signer = (*signer)(nil)
 
-// Signer adapts the key to crypto.Signer using an explicit context and
-// authentication source. Create an adapter for the lifetime of the request using
-// it. Canceling that context cancels subsequent and active signing operations
-// according to the transport's contract; no background context is substituted.
-//
-// The source is called for each Sign. Its returned data is owned and cleared by
-// that operation according to AuthenticationSource's contract. A nil source
-// explicitly disables VERIFY. The adapter borrows the key and does not own or
-// close its Device.
+// Signer adapts the key to crypto.Signer using ctx for every signature.
+// Create it for the lifetime of the request. Cancellation follows the transport's
+// contract; authentication follows [AuthenticationSource]. The adapter borrows
+// the key and does not close its Device.
 func (key *PrivateKey) Signer(ctx context.Context, authentication AuthenticationSource) crypto.Signer {
 	return &signer{key: key, ctx: ctx, authentication: authentication}
 }

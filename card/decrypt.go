@@ -28,17 +28,13 @@ import (
 // returns rsa.ErrDecryption and can expose a padding oracle. Prefer OAEP for new
 // protocols. Random is unused in OAEP and ordinary PKCS#1 v1.5 modes and may be nil.
 //
-// Authentication follows Sign: the source runs outside the operation gate,
-// and VERIFY and GENERAL AUTHENTICATE share one gate. A successful source gives
-// Decrypt ownership of its Data, which is cleared on every subsequent return.
-// Nil authentication sends no VERIFY. No failed operation is retried.
+// Authentication follows [AuthenticationSource].
 //
 // Malformed or wrong-sized card results match protocol.ErrInvalidResponse;
 // invalid padding matches rsa.ErrDecryption. SessionKeyLen does not hide card,
-// authentication, or transport errors. A completed result survives concurrent
-// context cancellation. Unlike Sign, Decrypt does not prove that the response
-// corresponds to the bound public key. The returned plaintext belongs to the
-// caller; temporary encoded-message storage is cleared before returning.
+// authentication, or transport errors. Unlike Sign, Decrypt does not prove that
+// the response corresponds to the bound public key. The returned plaintext
+// belongs to the caller; temporary encoded-message storage is cleared.
 func (key *PrivateKey) Decrypt(
 	ctx context.Context,
 	random io.Reader,

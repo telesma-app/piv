@@ -48,8 +48,7 @@ func Open(ctx context.Context, card Card) (*Transport, error) {
 }
 
 // ApplicationProperties returns the initial SELECT result without I/O. Its
-// slices are read-only views that remain available after Close. The snapshot
-// describes the selected application, not current authentication or key state.
+// slices are read-only views that remain available after Close.
 func (t *Transport) ApplicationProperties() protocol.ApplicationPropertyTemplate {
 	return t.application
 }

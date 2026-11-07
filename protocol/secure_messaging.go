@@ -14,8 +14,8 @@ type SecureMessagingCertificateSigner struct {
 // ParseSecureMessagingCertificateSigner parses the object's content without
 // its outer 53 template, as returned by GetData. It supports DER and GZIP
 // certificate encoding and preserves the uncompressed intermediate CVC.
-// It does not parse X.509 or CVC contents, verify signatures, establish trust,
-// or decide whether the intermediate CVC is required for a particular signer.
+// Certificate contents remain encoded and signatures are not verified.
+// The caller determines whether an intermediate CVC is required.
 func ParseSecureMessagingCertificateSigner(data []byte) (SecureMessagingCertificateSigner, error) {
 	certificate, intermediateCVC, err := decodeCertificate(data)
 	if err != nil {

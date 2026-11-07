@@ -9,7 +9,7 @@ import (
 )
 
 // GetData reads a PIV object without its outer template. An absent object is
-// reported as an iso7816.APDUError with status 6A82. The result is not cached.
+// reported as an iso7816.APDUError with status 6A82.
 func (d *Device) GetData(ctx context.Context, object protocol.Object) ([]byte, error) {
 	if err := d.lock(ctx); err != nil {
 		return nil, err
@@ -23,7 +23,7 @@ func (d *Device) GetData(ctx context.Context, object protocol.Object) ([]byte, e
 
 // GetCertificateDER reads and decompresses a slot's certificate without parsing
 // or validating its DER contents. It can export certificates unsupported by the
-// X.509 parser. The result is not cached.
+// X.509 parser.
 func (d *Device) GetCertificateDER(ctx context.Context, key protocol.KeyReference) ([]byte, error) {
 	if err := d.lock(ctx); err != nil {
 		return nil, err
@@ -36,7 +36,7 @@ func (d *Device) GetCertificateDER(ctx context.Context, key protocol.KeyReferenc
 }
 
 // GetCertificate reads a slot's X.509 certificate. Parsing does not verify its
-// signature or establish trust. The result is not cached.
+// signature or establish trust.
 func (d *Device) GetCertificate(ctx context.Context, key protocol.KeyReference) (*x509.Certificate, error) {
 	if err := d.lock(ctx); err != nil {
 		return nil, err
@@ -63,8 +63,8 @@ func (d *Device) GetKeyHistory(ctx context.Context) (protocol.KeyHistory, error)
 }
 
 // GetDiscovery reads the optional Discovery Object and its PIN Usage Policy.
-// The result is not cached. Absence remains an iso7816.APDUError (6A82), and
-// the policy does not select an authentication method or establish a VCI.
+// Absence remains an iso7816.APDUError (6A82), and the policy does not select an
+// authentication method or establish a VCI.
 func (d *Device) GetDiscovery(ctx context.Context) (protocol.Discovery, error) {
 	if err := d.lock(ctx); err != nil {
 		return protocol.Discovery{}, err
@@ -77,8 +77,7 @@ func (d *Device) GetDiscovery(ctx context.Context) (protocol.Discovery, error) {
 }
 
 // ReferenceStatus queries a reference's security status without submitting
-// authentication data or consuming a retry. The result reflects the card's
-// response and is not cached.
+// authentication data or consuming a retry.
 func (d *Device) ReferenceStatus(ctx context.Context, reference protocol.KeyReference) (client.ReferenceStatus, error) {
 	if err := d.lock(ctx); err != nil {
 		return client.ReferenceStatus{}, err

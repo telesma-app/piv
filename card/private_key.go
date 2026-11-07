@@ -77,15 +77,9 @@ func (key *PrivateKey) Public() crypto.PublicKey {
 // required entropy on the card. Digest and options are borrowed for the call
 // and must not be modified while it is in progress.
 //
-// Input preparation and the optional authentication source precede the operation
-// gate. The supplied VERIFY request and GENERAL AUTHENTICATE then run as one
-// workflow. Reference and encoded data are sent unchanged, including Global PIN
-// or OCC data. The source is called for every signature; no authentication status
-// is cached and no failed command is retried. A nil source sends no VERIFY.
-// On a successful source return, Sign takes ownership of its Data and clears it
-// before returning, including when waiting for the operation is canceled.
+// Authentication follows [AuthenticationSource]. Input preparation precedes
+// the source.
 //
-// Sign preserves a completed signature after concurrent context cancellation.
 // An invalid response or a signature that does not match Public returns an error
 // matching protocol.ErrInvalidResponse and no signature.
 func (key *PrivateKey) Sign(

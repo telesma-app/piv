@@ -59,7 +59,7 @@ func (key AdministrationKey) block() (cipher.Block, error) {
 
 // GenerateAsymmetricKeyPair authenticates the card administrator and replaces
 // a slot's private key under one operation gate. It returns the generated public
-// key; the old certificate is not changed. It does not retry or write a certificate.
+// key; the old certificate is not changed.
 //
 // A client.KeyGenerationError means the card acknowledged replacing the key but
 // its public key is invalid or does not match the request. An interrupted
@@ -101,7 +101,7 @@ func (d *Device) GenerateAsymmetricKeyPair(
 // PutData authenticates the card administrator and replaces a PIV object's
 // contents under one operation gate. Data is the object value without its outer
 // template, as returned by GetData. It is borrowed for the call. An interrupted
-// write may have completed; the library does not retry it or read it back implicitly.
+// write may have completed; the library does not read it back implicitly.
 func (d *Device) PutData(
 	ctx context.Context,
 	object protocol.Object,
@@ -133,8 +133,7 @@ func (d *Device) PutData(
 //
 // This operation is independent of GenerateAsymmetricKeyPair. A failed
 // certificate write does not undo an earlier key generation. An interrupted
-// write may have completed; the library does not retry it or read it back
-// implicitly.
+// write may have completed; the library does not read it back implicitly.
 func (d *Device) PutCertificate(
 	ctx context.Context,
 	key protocol.KeyReference,

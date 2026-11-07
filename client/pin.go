@@ -83,7 +83,7 @@ func EncodePIN(pin string) ([8]byte, error) {
 // Verify sends the supplied VERIFY operation, including empty status queries,
 // security-status resets, and encoded PIN, pairing-code, or OCC data. Data is
 // borrowed unchanged; its encoding belongs to the caller. An incorrect value
-// can consume a retry. The client never retries automatically.
+// can consume a retry.
 func (c *Client) Verify(ctx context.Context, request protocol.VerifyRequest) error {
 	var p1 byte
 	if request.ResetSecurityStatus {
@@ -100,7 +100,7 @@ func (c *Client) ResetSecurityStatus(ctx context.Context, reference protocol.Key
 }
 
 // VerifyPIN verifies the application PIN using the standard PIV encoding.
-// An incorrect PIN consumes a retry; the client does not retry automatically.
+// An incorrect PIN consumes a retry.
 func (c *Client) VerifyPIN(ctx context.Context, pin string) error {
 	encoded, err := EncodePIN(pin)
 	if err != nil {
@@ -147,7 +147,7 @@ func (c *Client) ChangePIN(ctx context.Context, current, replacement string) err
 // ResetRetryCounter resets the application PIN's retry counter and replaces
 // its encoded value. PUK and replacement contain exactly eight encoded bytes;
 // card-specific padding belongs to the caller. An incorrect PUK consumes a PUK
-// retry. The client does not retry automatically.
+// retry.
 func (c *Client) ResetRetryCounter(ctx context.Context, puk, replacement [8]byte) error {
 	defer clear(puk[:])
 	defer clear(replacement[:])

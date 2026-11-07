@@ -14,11 +14,10 @@ type decrypter struct {
 
 var _ crypto.Decrypter = (*decrypter)(nil)
 
-// Decrypter adapts the key to crypto.Decrypter using an explicit context and
-// authentication source. Create it for the lifetime of the request using it.
-// Options and authentication follow Decrypt. The adapter borrows the key and
-// does not own or close its Device. Canceling the supplied context cancels
-// operations according to the transport's contract.
+// Decrypter adapts the key to crypto.Decrypter using ctx for every decryption.
+// Create it for the lifetime of the request. Cancellation follows the transport's
+// contract; options follow Decrypt and authentication follows [AuthenticationSource].
+// The adapter borrows the key and does not close its Device.
 func (key *PrivateKey) Decrypter(ctx context.Context, authentication AuthenticationSource) crypto.Decrypter {
 	return &decrypter{key: key, ctx: ctx, authentication: authentication}
 }

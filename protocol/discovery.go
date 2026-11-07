@@ -7,8 +7,7 @@ import (
 )
 
 // PINUsagePolicyFlags is the first byte of the Discovery Object's PIN Usage
-// Policy (SP 800-73-5 Part 1, Sec. 3.3.2). Unknown bits remain available to the
-// caller; the library does not select an authentication method from these flags.
+// Policy (SP 800-73-5 Part 1, Sec. 3.3.2). Unknown bits are preserved.
 type PINUsagePolicyFlags byte
 
 const (
@@ -19,9 +18,8 @@ const (
 	PINUsageVCIWithoutPairingCode PINUsagePolicyFlags = 0x04
 )
 
-// PINPreference is the second byte of the PIN Usage Policy. The preference is
-// card metadata, not a request to use or verify that PIN. Unknown values are
-// preserved.
+// PINPreference is the second byte of the PIN Usage Policy.
+// Unknown values are preserved.
 type PINPreference byte
 
 const (
@@ -30,23 +28,21 @@ const (
 	PINPreferenceGlobalPIN      PINPreference = 0x20
 )
 
-// PINUsagePolicy retains both bytes of the card's policy without applying
-// defaults or interpreting the absence of a Discovery Object.
+// PINUsagePolicy contains both bytes of the card's PIN Usage Policy.
 type PINUsagePolicy struct {
 	Flags      PINUsagePolicyFlags
 	PrimaryPIN PINPreference
 }
 
-// Discovery describes the optional PIV Discovery Object. AID borrows the parsed
-// object. Its presence does not establish certificate trust or an active VCI.
+// Discovery describes the optional PIV Discovery Object.
+// AID borrows the parsed input.
 type Discovery struct {
 	AID            []byte
 	PINUsagePolicy PINUsagePolicy
 }
 
 // EncodeDiscovery encodes a Discovery Object's content without the outer 7E
-// template, for PutData (SP 800-73-5 Part 1, Sec. 3.3.2). It preserves the
-// supplied AID and policy bytes without validation or normalization.
+// template, for PutData (SP 800-73-5 Part 1, Sec. 3.3.2).
 func EncodeDiscovery(discovery Discovery) []byte {
 	data := bertlv.Append(nil, 0x4f, discovery.AID)
 
@@ -57,8 +53,7 @@ func EncodeDiscovery(discovery Discovery) []byte {
 
 // ParseDiscovery parses a Discovery Object's content without the outer tag 7E,
 // as returned by GetData. The AID and two-byte PIN Usage Policy are mandatory;
-// unknown fields, policy bits, and preference values are retained or ignored
-// without changing authentication behavior.
+// unknown fields are ignored.
 func ParseDiscovery(data []byte) (Discovery, error) {
 	var (
 		discovery           Discovery

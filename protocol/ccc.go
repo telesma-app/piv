@@ -15,7 +15,6 @@ import (
 // unspecified values, whether their fields were absent or encoded with zero
 // length. Raw preserves that distinction and the complete original encoding.
 // ApplicationsCardURL is the opaque GSC-IS field, not a decoded textual URL.
-// Parsing does not verify the Security Object or establish trust in the contents.
 type CCC struct {
 	Raw                        []byte
 	CardIdentifier             *[21]byte
@@ -32,7 +31,6 @@ type CCC struct {
 // other mandatory fields to be empty; this parser also accepts their absence
 // in sparse token objects. Known fields are checked for their encoded lengths
 // and may appear only once; unknown and removed legacy fields are ignored.
-// Raw preserves the complete contents.
 func ParseCCC(data []byte) (CCC, error) {
 	ccc := CCC{Raw: data}
 
@@ -46,8 +44,7 @@ func ParseCCC(data []byte) (CCC, error) {
 
 		data = rest
 
-		// Table 9 assigns F0 through F7 and FA through FE; F8 and F9 are
-		// outside that set, along with any other unrecognized tags.
+		// Table 9 leaves F8 and F9 unassigned.
 		if tag < 0xf0 || tag > 0xfe || tag == 0xf8 || tag == 0xf9 {
 			continue
 		}

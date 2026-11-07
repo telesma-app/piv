@@ -57,8 +57,7 @@ const (
 // Algorithm is a PIV algorithm identifier (SP 800-73-5 Part 1, Sec. 5.2;
 // SP 800-78-5, Table 9). It selects an algorithm and key size or a secure
 // messaging cipher suite. The asymmetric identifiers also serve as generation
-// mechanism identifiers (SP 800-73-5 Part 1, Table 6). These constants describe
-// wire values, including legacy algorithms, rather than application policy.
+// mechanism identifiers (SP 800-73-5 Part 1, Table 6).
 type Algorithm byte
 
 const (

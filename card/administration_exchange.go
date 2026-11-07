@@ -11,14 +11,11 @@ import (
 // command under the same operation gate. Like Exchange, it returns the final
 // status word without interpretation. Commands must leave PIV selected.
 //
-// The optional authentication source runs before the gate. After administration
-// authentication, its VERIFY request and the command run under the gate. A nil
-// source sends no VERIFY. On a successful source return, the operation owns its
-// Data and clears it before returning, including when waiting is canceled. Source
-// errors leave ownership with the source. AdministrationKey and command data are
-// borrowed for the call and are not retained or cleared.
+// Authentication follows [AuthenticationSource], with administration
+// authentication preceding VERIFY under the gate. AdministrationKey and command
+// data are borrowed for the call and are not retained or cleared.
 //
-// This operation does not retry. An interrupted command may have completed.
+// An interrupted command may have completed.
 func (d *Device) ExchangeAdministration(
 	ctx context.Context,
 	command iso7816.Command,

@@ -15,7 +15,6 @@ const maxCertificateSize = 1 << 20
 
 // EncodeCertificate encodes DER bytes as an uncompressed PIV certificate object
 // value without its outer 0x53 wrapper (SP 800-73-5 Part 1, Tables 11 and 16-18).
-// It does not parse or validate the supplied certificate.
 func EncodeCertificate(der []byte) []byte {
 	data := bertlv.Append(nil, 0x70, der)
 	return append(data, 0x71, 1, 0, 0xfe, 0)
@@ -23,7 +22,7 @@ func EncodeCertificate(der []byte) []byte {
 
 // DecodeCertificate extracts certificate bytes from the value of a PIV
 // certificate data object, after removing its outer 0x53 wrapper. It supports
-// uncompressed and GZIP-compressed data without parsing or validating X.509.
+// uncompressed and GZIP-compressed data without parsing X.509.
 // Uncompressed output borrows data; GZIP output is newly allocated.
 func DecodeCertificate(data []byte) ([]byte, error) {
 	certificate, _, err := decodeCertificate(data)
@@ -100,7 +99,7 @@ func decodeCertificate(data []byte) ([]byte, []byte, error) {
 
 // ParseCertificate parses the value of a PIV certificate data object, after
 // removing its outer 0x53 wrapper. It supports DER and GZIP-compressed DER.
-// Parsing does not establish trust in the certificate or verify its signature.
+// It does not verify the certificate's signature.
 func ParseCertificate(data []byte) (*x509.Certificate, error) {
 	certificate, err := DecodeCertificate(data)
 	if err != nil {

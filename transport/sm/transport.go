@@ -80,7 +80,6 @@ func Open(ctx context.Context, connection transport.Device, parameters Parameter
 
 // ApplicationProperties returns the SELECT result used to establish this
 // channel without I/O. Its slices are read-only and remain available after Close.
-// The snapshot describes advertised algorithms, not current authentication state.
 func (t *Transport) ApplicationProperties() protocol.ApplicationPropertyTemplate {
 	return t.application
 }
@@ -194,9 +193,8 @@ func (t *Transport) invalidate(err error) error {
 	return errors.Join(err, t.Close())
 }
 
-// Close prevents new exchanges, erases owned session keys and closes the
-// connection once. It does not wait for the exchange gate or hold the crypto
-// mutex during I/O. Repeated calls return the same close error.
+// Close prevents new exchanges, erases session keys, and closes the connection
+// once. It can run concurrently with Exchange. Repeated calls return the same error.
 func (t *Transport) Close() error {
 	t.closeOnce.Do(func() {
 		close(t.closed)

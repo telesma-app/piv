@@ -61,8 +61,7 @@ func deriveKeys(suite cipherSuite, z []byte, hostID, cardID [8]byte, hostPublic,
 	return keys
 }
 
-// cmac implements AES-CMAC as specified by SP 800-38B, Section 6.1. Its key
-// length is fixed by the caller's cipher suite; an invalid key is a code error.
+// cmac implements AES-CMAC as specified by SP 800-38B, Section 6.1.
 func cmac(key, data []byte) [16]byte {
 	block, err := aes.NewCipher(key)
 	if err != nil {

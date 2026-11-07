@@ -8,12 +8,10 @@ import (
 )
 
 // PrintedInfo contains the optional Printed Information object's cardholder
-// text (SP 800-73-5 Part 1, Sec. 3.3.1 and Table 15). Text is preserved as ASCII
-// without trimming or normalization. ExpirationDate is midnight UTC on the
-// printed date; parsing does not decide whether the card has expired.
+// text (SP 800-73-5 Part 1, Sec. 3.3.1 and Table 15).
+// Text is preserved as ASCII without trimming or normalization.
+// ExpirationDate is midnight UTC on the printed date.
 // Organization affiliation pointers distinguish absent and present-empty lines.
-// The contents have not been authenticated against the Security Object or the
-// information physically printed on the card.
 type PrintedInfo struct {
 	Name                         string
 	EmployeeAffiliation          string

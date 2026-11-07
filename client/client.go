@@ -14,8 +14,7 @@ import (
 	"github.com/telesma-app/piv/transport"
 )
 
-// Client sends PIV commands on a bound transport. It does not own the transport
-// or cache authentication state.
+// Client sends PIV commands through a borrowed transport.
 type Client struct {
 	transport transport.APDU
 }
@@ -42,7 +41,7 @@ func (c *Client) exchange(ctx context.Context, command iso7816.Command) (iso7816
 // Select activates PIV and parses its application property template. Selecting
 // PIV again preserves its security status; switching to another application
 // clears PIV's application-specific security status (SP 800-73-5 Part 2,
-// Sec. 3.1.1). The result is not cached.
+// Sec. 3.1.1).
 func (c *Client) Select(ctx context.Context) (protocol.ApplicationPropertyTemplate, error) {
 	response, err := c.exchange(ctx, protocol.SelectCommand())
 	if err != nil {
@@ -90,7 +89,7 @@ func (c *Client) GetData(ctx context.Context, object protocol.Object) ([]byte, e
 }
 
 // PutData replaces an object's contents. It requires prior administration
-// authentication and may overwrite existing card data.
+// authentication.
 func (c *Client) PutData(ctx context.Context, object protocol.Object, data []byte) error {
 	// Discovery and BIT use their own templates without a tag-list selector
 	// (SP 800-73-5 Part 2, Tables 8-10).

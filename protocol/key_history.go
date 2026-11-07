@@ -9,7 +9,7 @@ import (
 // KeyHistory describes retired key management keys. Certificates stored on the
 // card occupy the lowest retired key references; keys with off-card certificates
 // occupy the highest. OffCardCertURL may also identify certificates stored on
-// the card. It is returned without fetching or establishing trust in its content.
+// the card.
 type KeyHistory struct {
 	KeysWithOnCardCerts  uint8
 	KeysWithOffCardCerts uint8
@@ -17,8 +17,7 @@ type KeyHistory struct {
 }
 
 // EncodeKeyHistory encodes a Key History object's content without the outer 53
-// template, for PutData (SP 800-73-5 Part 1, Table 20). It preserves the supplied
-// counts and URL without validation or normalization. An empty URL omits tag F3.
+// template, for PutData (SP 800-73-5 Part 1, Table 20). An empty URL omits tag F3.
 func EncodeKeyHistory(history KeyHistory) []byte {
 	data := []byte{0xc1, 1, history.KeysWithOnCardCerts, 0xc2, 1, history.KeysWithOffCardCerts}
 	if history.OffCardCertURL != "" {

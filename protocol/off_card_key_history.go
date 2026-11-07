@@ -15,7 +15,7 @@ type OffCardCertificate struct {
 // ParseOffCardKeyHistoryFile parses the DER file identified by OffCardCertURL
 // (SP 800-73-5 Part 1, Sec. 3.3.3). Entries retain their file order and must have
 // distinct retired key references. The parser checks the file schema and DER
-// framing without parsing X.509 contents or establishing certificate trust.
+// framing without parsing X.509 contents.
 // Retrieval and verification of the file's URL hash belong to the caller.
 func ParseOffCardKeyHistoryFile(data []byte) ([]OffCardCertificate, error) {
 	file, rest, err := offCardSequence(data)

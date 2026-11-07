@@ -9,7 +9,7 @@ import (
 // Verify sends an encoded VERIFY operation under the card's operation gate.
 // This includes empty status queries, security-status resets, and PIN,
 // pairing-code, or OCC authentication data. Request data is borrowed unchanged.
-// An incorrect value can consume a retry; the card does not retry automatically.
+// An incorrect value can consume a retry.
 // Separate calls do not form an atomic authentication workflow.
 func (d *Device) Verify(ctx context.Context, request protocol.VerifyRequest) error {
 	if err := d.lock(ctx); err != nil {
@@ -41,7 +41,7 @@ func (d *Device) ResetSecurityStatus(ctx context.Context, reference protocol.Key
 // ChangeReferenceData replaces a PIN or PUK using eight-byte encoded values.
 // Reference is ApplicationPIN, GlobalPIN, or PUK (SP 800-73-5 Part 2,
 // Sec. 3.2.2). An incorrect current value consumes a retry. Card-specific
-// padding belongs to the caller; no automatic retry is performed.
+// padding belongs to the caller.
 func (d *Device) ChangeReferenceData(ctx context.Context, reference protocol.KeyReference, current, replacement [8]byte) error {
 	defer clear(current[:])
 	defer clear(replacement[:])
@@ -55,7 +55,7 @@ func (d *Device) ChangeReferenceData(ctx context.Context, reference protocol.Key
 }
 
 // ChangePIN replaces the application PIN using the standard PIV encoding.
-// An incorrect current PIN consumes a retry; no automatic retry is performed.
+// An incorrect current PIN consumes a retry.
 func (d *Device) ChangePIN(ctx context.Context, current, replacement string) error {
 	if err := d.lock(ctx); err != nil {
 		return err
@@ -82,7 +82,7 @@ func (d *Device) ResetRetryCounter(ctx context.Context, puk, replacement [8]byte
 
 // UnblockPIN resets the application PIN's retry counter and replaces the PIN
 // using the standard PIV encoding. The eight-byte PUK keeps caller-supplied
-// padding. An incorrect PUK consumes a retry; no automatic retry is performed.
+// padding. An incorrect PUK consumes a retry.
 func (d *Device) UnblockPIN(ctx context.Context, puk [8]byte, replacement string) error {
 	defer clear(puk[:])
 

@@ -9,14 +9,14 @@ import (
 
 // CHUID contains the Card Holder Unique Identifier data object (SP 800-73-5
 // Part 1, Sec. 3.1.2 and Table 10). FASCN is the encoded 25-byte FASC-N, without
-// decoding its components. ExpirationDate is a calendar date at midnight UTC;
-// parsing it does not evaluate whether the card has expired.
+// decoding its components. ExpirationDate is a calendar date at midnight UTC.
 //
 // Raw preserves the exact encoded object contents, including unknown fields
-// and original BER length encodings. Raw, CardholderUUID, and IssuerSignature
-// borrow the parsed input. FASCN and GUID are values. A nil signature means its
-// field was absent; a non-nil empty signature means an unsigned placeholder.
-// Parsing neither validates the CMS signature nor establishes cardholder trust.
+// and original BER length encodings, for interpreting signed content.
+// Raw, CardholderUUID, and IssuerSignature borrow the parsed input. A nil
+// signature means its field was absent; a non-nil empty signature means an
+// unsigned placeholder.
+// Parsing does not verify the CMS signature.
 type CHUID struct {
 	Raw             []byte
 	FASCN           [25]byte
@@ -30,9 +30,7 @@ type CHUID struct {
 // by GetData. FASC-N, GUID, and expiration date are required. For compatibility
 // with unpersonalized PIV tokens, the signature may be absent or empty. The
 // optional Cardholder UUID is preserved without enforcing a UUID version.
-// Unknown and removed legacy fields are ignored, while Raw retains them.
-// Use those original bytes when interpreting signed content; this parser does
-// not reconstruct a signature input or perform a conformance assessment.
+// Unknown and removed legacy fields are ignored.
 func ParseCHUID(data []byte) (CHUID, error) {
 	chuid := CHUID{Raw: data}
 
