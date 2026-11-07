@@ -52,6 +52,9 @@
 // and the command then run together. The operation owns and clears successfully
 // supplied authentication data. The vendor command must leave PIV selected.
 //
+// Vendor-specific PIV commands are provided by github.com/telesma-app/yubico/piv
+// and github.com/telesma-app/token2/piv. Both operate on the same Device.
+//
 // PrivateKey binds a slot and its public key without I/O. Sign, Decrypt and ECDH
 // take an explicit context and optional AuthenticationSource. The source supplies
 // a VERIFY reference and encoded data before the operation gate; VERIFY and the
