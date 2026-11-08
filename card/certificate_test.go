@@ -21,6 +21,42 @@ import (
 	"github.com/telesma-app/piv/transport"
 )
 
+func TestGetCertificateReturnsDERWithoutTrustEvaluation(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "expired PIV certificate"},
+		NotBefore:    time.Unix(1, 0),
+		NotAfter:     time.Unix(2, 0),
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	inner := append([]byte{0x70, 0x82, byte(len(der) >> 8), byte(len(der))}, der...)
+	inner = append(inner, 0x71, 1, 0, 0xfe, 0)
+	object := append([]byte{0x53, 0x82, byte(len(inner) >> 8), byte(len(inner))}, inner...)
+	d, _ := newDevice(t, exchangeStep{
+		command:  []byte{0, 0xcb, 0x3f, 0xff, 5, 0x5c, 3, 0x5f, 0xc1, 5, 0},
+		response: iso7816.Response{Status: 0x9000, Data: object},
+	})
+
+	certificate, err := d.GetCertificate(t.Context(), protocol.PIVAuthentication)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(certificate.Raw, der) || certificate.Subject.CommonName != template.Subject.CommonName {
+		t.Errorf("certificate = %+v, want original expired certificate", certificate.Subject)
+	}
+}
+
 func readCertificateDER(t testing.TB) []byte {
 	t.Helper()
 
@@ -42,14 +78,6 @@ func readCertificateDER(t testing.TB) []byte {
 	}
 
 	return der
-}
-
-func readTLV(tag byte, data []byte) []byte {
-	if len(data) < 128 {
-		return append([]byte{tag, byte(len(data))}, data...)
-	}
-
-	return append([]byte{tag, 0x82, byte(len(data) >> 8), byte(len(data))}, data...)
 }
 
 func certificateResponse(data []byte, info byte) iso7816.Response {
@@ -229,16 +257,25 @@ func TestCertificatesPreservesRetiredMSCUID(t *testing.T) {
 	steps[4].response = iso7816.Response{Status: 0x9000, Data: readTLV(0x53, contents)}
 	d, _ := newDevice(t, steps...)
 
-	var count int
+	var (
+		count int
+		found bool
+	)
 	for entry, err := range d.Certificates(t.Context()) {
 		count++
 
 		if entry.Key == protocol.RetiredKey1 {
+			found = true
+
 			if !errors.Is(err, protocol.ErrInvalidResponse) || entry.Certificate != nil ||
 				!bytes.Equal(entry.DER, []byte{0x30, 0}) || string(entry.MSCUID) != "old" {
 				t.Errorf("retired certificate = %+v, %v; want preserved DER/MSCUID despite invalid X.509", entry, err)
 			}
 		}
+	}
+
+	if !found {
+		t.Error("certificate iterator did not yield RetiredKey1")
 	}
 
 	if count != 24 {

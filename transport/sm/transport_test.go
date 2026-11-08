@@ -1,346 +1,18 @@
 package sm
 
 import (
-	"bytes"
 	"context"
-	"crypto/ecdh"
-	"crypto/ecdsa"
-	"crypto/rand"
-	"crypto/sha256"
 	"errors"
 	"io"
-	"slices"
 	"sync"
 	"testing"
 	"testing/synctest"
+	"time"
 
-	"github.com/telesma-app/bertlv"
 	"github.com/telesma-app/iso7816"
 	"github.com/telesma-app/piv/protocol"
 	"github.com/telesma-app/piv/transport"
 )
-
-type handshakePeer struct {
-	t             testing.TB
-	suite         cipherSuite
-	static        *ecdh.PrivateKey
-	signer        *ecdsa.PrivateKey
-	issuer        [8]byte
-	certificate   []byte
-	keys          sessionKeys
-	counter       [16]byte
-	responseChain [16]byte
-	requests      []iso7816.Command
-	handshake     func(iso7816.Response) iso7816.Response
-	effect        func(context.Context, iso7816.Command) (iso7816.Response, error)
-	application   []byte
-	closed        chan struct{}
-	closeOnce     sync.Once
-	closeCalls    int
-	closeErr      error
-}
-
-func newHandshakePeer(t testing.TB, suite cipherSuite) *handshakePeer {
-	t.Helper()
-
-	static, err := suite.curve.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	signer, err := ecdsa.GenerateKey(suite.signingCurve, rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	p := &handshakePeer{
-		t: t, suite: suite, static: static, signer: signer, issuer: [8]byte{1, 2, 3, 4, 5, 6, 7, 8},
-		counter: [16]byte{15: 1}, closed: make(chan struct{}),
-	}
-	p.certificate = fixtureCertificate(t, static.PublicKey(), signer, p.issuer)
-	p.application = bertlv.Append(nil, 0x61, []byte{
-		0x4f, 1, 1, 0x79, 3, 0x4f, 1, 2,
-		0xac, 6, 0x80, 1, byte(suite.algorithm), 6, 1, 0,
-	})
-
-	return p
-}
-
-func (p *handshakePeer) parameters() Parameters {
-	return Parameters{
-		CipherSuite: p.suite.algorithm,
-		Trust:       Trust{IssuerID: p.issuer, PublicKey: &p.signer.PublicKey},
-		HostID:      [8]byte{8, 7, 6, 5, 4, 3, 2, 1}, Encoding: iso7816.EncodingShort,
-	}
-}
-
-func (p *handshakePeer) Exchange(ctx context.Context, command iso7816.Command) (iso7816.Response, error) {
-	if err := ctx.Err(); err != nil {
-		return iso7816.Response{}, err
-	}
-
-	copy := command
-	copy.Data = slices.Clone(command.Data)
-
-	p.requests = append(p.requests, copy)
-	if command.INS == 0xa4 {
-		return iso7816.Response{Data: p.application, Status: 0x9000}, nil
-	}
-
-	if command.CLA == 0 && command.INS == 0x87 {
-		p.t.Helper()
-
-		if command.P1 != byte(p.suite.algorithm) || command.P2 != 4 || command.Encoding != iso7816.EncodingShort || command.Le != 256 {
-			p.t.Fatalf("establishment command = %+v", command)
-		}
-
-		body, err := protocol.ParseObject(command.Data, 0x7c)
-		if err != nil {
-			p.t.Fatal(err)
-		}
-
-		tag, challenge, rest, err := bertlv.Parse(body)
-		if err != nil || tag != 0x81 || len(challenge) != 9+len(p.static.PublicKey().Bytes()) || challenge[0] != 0 || !bytes.Equal(rest, []byte{0x82, 0}) {
-			p.t.Fatalf("establishment data = %x, %v", body, err)
-		}
-
-		hostID := [8]byte(challenge[1:9])
-		public := challenge[9:]
-
-		key, err := p.suite.curve.NewPublicKey(public)
-		if err != nil {
-			p.t.Fatal(err)
-		}
-
-		z, err := p.static.ECDH(key)
-		if err != nil {
-			p.t.Fatal(err)
-		}
-		defer clear(z)
-
-		nonce := bytes.Repeat([]byte{0x42}, p.suite.nonceSize)
-		id := sha256.Sum256(p.certificate)
-		p.keys = deriveKeys(p.suite, z, hostID, [8]byte(id[:8]), public, nonce)
-		confirmation := append([]byte("KC_1_V"), id[:8]...)
-		confirmation = append(confirmation, hostID[:]...)
-		confirmation = append(confirmation, public[1:]...)
-		cryptogram := cmac(p.keys.cfrm[:p.keys.keySize], confirmation)
-
-		data := append([]byte{0}, nonce...)
-		data = append(data, cryptogram[:]...)
-		data = append(data, p.certificate...)
-
-		response := iso7816.Response{Data: bertlv.Append(nil, 0x7c, bertlv.Append(nil, 0x82, data)), Status: 0x9000}
-		if p.handshake != nil {
-			response = p.handshake(response)
-		}
-
-		return response, nil
-	}
-
-	if p.effect != nil {
-		return p.effect(ctx, command)
-	}
-
-	return p.protectedResponse([]byte("public object"), 0x9000), nil
-}
-
-func (p *handshakePeer) protectedResponse(plaintext []byte, status iso7816.StatusWord) iso7816.Response {
-	var data []byte
-
-	if len(plaintext) != 0 {
-		counter := p.counter
-		counter[0] = 0x80
-		data = bertlv.Append(nil, 0x87, append([]byte{1}, encrypt(p.keys.enc[:p.keys.keySize], counter, plaintext)...))
-	}
-
-	data = append(data, 0x99, 2, status.SW1(), status.SW2())
-	mac := cmac(p.keys.rmac[:p.keys.keySize], append(p.responseChain[:], data...))
-	data = bertlv.Append(data, 0x8e, mac[:8])
-	p.responseChain = mac
-	p.counter[15]++
-
-	return iso7816.Response{Data: data, Status: 0x9000}
-}
-
-func (p *handshakePeer) Close() error {
-	p.closeCalls++
-	p.closeOnce.Do(func() { close(p.closed) })
-
-	return p.closeErr
-}
-
-func openHandshakePeer(t testing.TB, p *handshakePeer) *Transport {
-	t.Helper()
-
-	channel, err := Open(t.Context(), p, p.parameters())
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	t.Cleanup(func() { _ = channel.Close() })
-
-	return channel
-}
-
-func readCommand() iso7816.Command {
-	return iso7816.Command{INS: 0xcb, P1: 0x3f, P2: 0xff, Data: []byte{0x5c, 1, 0x7e}, Le: 256}
-}
-
-func TestOpenAndSequentialExchanges(t *testing.T) {
-	testCipherSuites(t, func(t *testing.T, suite cipherSuite) {
-		for _, encoding := range []iso7816.Encoding{iso7816.EncodingShort, iso7816.EncodingExtended} {
-			p := newHandshakePeer(t, suite)
-			parameters := p.parameters()
-			parameters.Encoding = encoding
-
-			channel, err := Open(t.Context(), p, parameters)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			t.Cleanup(func() { _ = channel.Close() })
-
-			for range 3 {
-				response, err := channel.Exchange(t.Context(), readCommand())
-				if err != nil || response.Status != 0x9000 || string(response.Data) != "public object" {
-					t.Fatalf("Exchange = %+v, %v", response, err)
-				}
-			}
-
-			if !channel.PIVSecureMessaging() || channel.session.counter[15] != 4 {
-				t.Fatal("session not active or counter did not advance")
-			}
-
-			if channel.session.keys.cfrm != [32]byte{} {
-				t.Fatal("key confirmation key retained in session")
-			}
-
-			if len(p.requests) != 5 || p.requests[0].INS != 0xa4 || p.requests[1].INS != 0x87 || p.requests[2].CLA != 0x0c {
-				t.Fatalf("requests = %+v", p.requests)
-			}
-
-			if p.requests[2].Encoding != encoding || channel.session.keys.keySize != suite.keySize {
-				t.Fatalf("protected encoding/key size = %v/%d", p.requests[2].Encoding, channel.session.keys.keySize)
-			}
-		}
-	})
-}
-
-func TestFailedOpenOwnership(t *testing.T) {
-	testCipherSuites(t, func(t *testing.T, suite cipherSuite) {
-		for _, mode := range []string{"encoding", "missing suite", "invalid suite", "unsupported", "rejected", "truncated", "truncated body", "control", "untrusted", "identity", "cryptogram"} {
-			t.Run(mode, func(t *testing.T) {
-				p := newHandshakePeer(t, suite)
-				parameters := p.parameters()
-				invalidates := false
-
-				switch mode {
-				case "encoding":
-					parameters.Encoding = iso7816.EncodingAuto
-				case "missing suite":
-					parameters.CipherSuite = 0
-				case "invalid suite":
-					parameters.CipherSuite = protocol.ECCP256
-				case "unsupported":
-					other := protocol.CipherSuite2
-					if suite.algorithm == other {
-						other = protocol.CipherSuite7
-					}
-
-					p.application = bytes.ReplaceAll(p.application, []byte{0x80, 1, byte(suite.algorithm)}, []byte{0x80, 1, byte(other)})
-				case "rejected":
-					p.handshake = func(iso7816.Response) iso7816.Response { return iso7816.Response{Status: 0x6a86} }
-				case "truncated":
-					p.handshake = func(iso7816.Response) iso7816.Response {
-						return iso7816.Response{Data: []byte{0x7c, 0}, Status: 0x9000}
-					}
-					invalidates = true
-				case "truncated body":
-					p.handshake = func(iso7816.Response) iso7816.Response {
-						data := make([]byte, 1+suite.nonceSize+16)
-						return iso7816.Response{Data: bertlv.Append(nil, 0x7c, bertlv.Append(nil, 0x82, data)), Status: 0x9000}
-					}
-					invalidates = true
-				case "control":
-					p.handshake = func(r iso7816.Response) iso7816.Response {
-						_, _, cert, err := parseEstablishmentResponse(suite, r.Data)
-						if err != nil {
-							t.Fatal(err)
-						}
-
-						value := append([]byte{0x10}, make([]byte, suite.nonceSize+16)...)
-						value = append(value, cert...)
-						r.Data = bertlv.Append(nil, 0x7c, bertlv.Append(nil, 0x82, value))
-
-						return r
-					}
-					invalidates = true
-				case "untrusted":
-					parameters.Trust.IssuerID[0] ^= 1
-					invalidates = true
-				case "identity":
-					p.handshake = func(r iso7816.Response) iso7816.Response {
-						_, _, cert, err := parseEstablishmentResponse(suite, r.Data)
-						if err != nil {
-							t.Fatal(err)
-						}
-
-						subject := bytes.Index(cert, []byte{0x5f, 0x20, 16})
-						if subject < 0 {
-							t.Fatal("missing CVC subject fixture")
-						}
-
-						cert[subject+3] ^= 1
-
-						return r
-					}
-					invalidates = true
-				case "cryptogram":
-					p.handshake = func(r iso7816.Response) iso7816.Response {
-						nonce, cryptogram, cert, err := parseEstablishmentResponse(suite, r.Data)
-						if err != nil {
-							t.Fatal(err)
-						}
-
-						cryptogram[0] ^= 1
-
-						value := append([]byte{0}, nonce...)
-						value = append(value, cryptogram...)
-						value = append(value, cert...)
-						r.Data = bertlv.Append(nil, 0x7c, bertlv.Append(nil, 0x82, value))
-
-						return r
-					}
-					invalidates = true
-				}
-
-				channel, err := Open(t.Context(), p, parameters)
-				if channel != nil || err == nil {
-					t.Fatalf("Open = %v, %v, want no channel", channel, err)
-				}
-
-				wantRequests := 2
-
-				switch mode {
-				case "encoding", "missing suite", "invalid suite":
-					wantRequests = 0
-				case "unsupported":
-					wantRequests = 1
-				}
-
-				if len(p.requests) != wantRequests {
-					t.Fatalf("Open sent %d commands, want %d", len(p.requests), wantRequests)
-				}
-
-				var invalidated *transport.DeviceInvalidatedError
-				if errors.As(err, &invalidated) != invalidates || (p.closeCalls == 1) != invalidates {
-					t.Fatalf("Open = %v, closes=%d, want invalidated=%t", err, p.closeCalls, invalidates)
-				}
-			})
-		}
-	})
-}
 
 func TestAuthenticatedErrorPreservesSession(t *testing.T) {
 	testCipherSuites(t, func(t *testing.T, suite cipherSuite) {
@@ -462,30 +134,99 @@ func TestCloseInterruptsIOAndReleasesWaiters(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			p := newHandshakePeer(t, suite)
 			channel := openHandshakePeer(t, p)
-			p.effect = func(context.Context, iso7816.Command) (iso7816.Response, error) {
-				<-p.closed
-				return iso7816.Response{}, io.ErrClosedPipe
+			ctx, cancel := context.WithCancel(t.Context())
+
+			var workers sync.WaitGroup
+
+			defer func() {
+				cancel()
+
+				done := make(chan struct{})
+
+				go func() {
+					_ = channel.Close()
+
+					workers.Wait()
+					close(done)
+				}()
+
+				select {
+				case <-done:
+				case <-time.After(time.Second):
+					t.Fatal("workers did not stop after cleanup")
+				}
+			}()
+
+			p.effect = func(ctx context.Context, _ iso7816.Command) (iso7816.Response, error) {
+				select {
+				case <-p.closed:
+					return iso7816.Response{}, io.ErrClosedPipe
+				case <-ctx.Done():
+					return iso7816.Response{}, ctx.Err()
+				}
 			}
 			active := make(chan error, 1)
 
-			go func() { _, err := channel.Exchange(t.Context(), readCommand()); active <- err }()
+			workers.Go(func() { _, err := channel.Exchange(ctx, readCommand()); active <- err })
 
 			synctest.Wait()
+
+			if len(p.requests) != 3 {
+				t.Fatalf("active Exchange did not reach I/O: requests=%d, want 3", len(p.requests))
+			}
+
+			select {
+			case err := <-active:
+				t.Fatalf("active Exchange completed before Close: %v", err)
+			default:
+			}
 
 			queued := make(chan error, 1)
 
-			go func() { _, err := channel.Exchange(t.Context(), readCommand()); queued <- err }()
+			workers.Go(func() { _, err := channel.Exchange(ctx, readCommand()); queued <- err })
 
 			synctest.Wait()
 
-			if err := channel.Close(); err != nil {
-				t.Fatal(err)
+			select {
+			case err := <-queued:
+				t.Fatalf("queued Exchange completed before Close: %v", err)
+			default:
+			}
+
+			if len(p.requests) != 3 {
+				t.Fatalf("queued Exchange performed I/O: requests=%d, want 3", len(p.requests))
+			}
+
+			closed := make(chan error, 1)
+
+			workers.Go(func() { closed <- channel.Close() })
+
+			select {
+			case err := <-closed:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("Close waited for the active exchange")
 			}
 
 			synctest.Wait()
 
-			if !errors.Is(<-queued, io.ErrClosedPipe) || !errors.Is(<-active, io.ErrClosedPipe) {
-				t.Fatal("callers not released")
+			for _, caller := range []struct {
+				name   string
+				result <-chan error
+			}{
+				{name: "queued", result: queued},
+				{name: "active", result: active},
+			} {
+				select {
+				case err := <-caller.result:
+					if !errors.Is(err, io.ErrClosedPipe) {
+						t.Fatalf("%s Exchange after Close = %v, want closed pipe", caller.name, err)
+					}
+				case <-time.After(time.Second):
+					t.Fatalf("%s Exchange did not stop after Close", caller.name)
+				}
 			}
 
 			if p.closeCalls != 1 || len(p.requests) != 3 || channel.session.keys != (sessionKeys{}) {
@@ -517,6 +258,42 @@ func TestCloseErrorAndLocalRejection(t *testing.T) {
 
 		if p.closeCalls != 1 || channel.session.keys != (sessionKeys{}) {
 			t.Fatal("close repeated or retained keys")
+		}
+	})
+}
+
+func TestExchangeRejectsOversizedProtectedDataBeforeIO(t *testing.T) {
+	testCipherSuites(t, func(t *testing.T, suite cipherSuite) {
+		p := newHandshakePeer(t, suite)
+		parameters := p.parameters()
+		parameters.Encoding = iso7816.EncodingExtended
+
+		channel, err := Open(t.Context(), p, parameters)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		t.Cleanup(func() { _ = channel.Close() })
+
+		before := channel.session
+		calls := len(p.requests)
+		command := iso7816.Command{INS: 0x87, P1: 0x11, P2: 0x9c, Data: make([]byte, 65504), Le: 256}
+
+		response, err := channel.Exchange(t.Context(), command)
+		if !errors.Is(err, iso7816.ErrInvalidCommand) || response.Data != nil || response.Status != 0 {
+			t.Errorf("oversized protected Exchange = %+v, %v; want invalid command", response, err)
+		}
+
+		if len(p.requests) != calls || p.closeCalls != 0 || channel.session != before || !channel.PIVSecureMessaging() {
+			t.Fatal("local size rejection performed I/O or changed the session")
+		}
+
+		if _, err := channel.Exchange(t.Context(), readCommand()); err != nil {
+			t.Fatalf("Exchange after local size rejection: %v", err)
+		}
+
+		if len(p.requests) != calls+1 {
+			t.Errorf("Exchange count after reuse = %d, want %d", len(p.requests), calls+1)
 		}
 	})
 }

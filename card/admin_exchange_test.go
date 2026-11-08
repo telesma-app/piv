@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/telesma-app/iso7816"
 	"github.com/telesma-app/piv/client"
@@ -58,37 +59,42 @@ func TestExchangeAdministrationAuthenticatesAndPreservesRawExchange(t *testing.T
 }
 
 func TestExchangeAdministrationAuthenticatesSourceOutsideGateAndVerifiesBeforeCommand(t *testing.T) {
-	d, raw := newAdministrationPeer(t, administrationVectors[0])
-	data := []byte{1, 2, 3, 4, 5, 6, 0xff, 0xff}
-	command := iso7816.Command{INS: 0xf8}
-	raw.effect = func(_ context.Context, command iso7816.Command) (iso7816.Response, error) {
-		return iso7816.Response{Status: 0x9000}, nil
-	}
-	authentication := func(ctx context.Context) (protocol.VerifyRequest, error) {
-		if _, err := d.Exchange(ctx, iso7816.Command{INS: 0xfd}); err != nil {
-			return protocol.VerifyRequest{}, err
+	synctest.Test(t, func(t *testing.T) {
+		d, raw := newAdministrationPeer(t, administrationVectors[0])
+		data := []byte{1, 2, 3, 4, 5, 6, 0xff, 0xff}
+		command := iso7816.Command{INS: 0xf8}
+		raw.effect = func(_ context.Context, command iso7816.Command) (iso7816.Response, error) {
+			return iso7816.Response{Status: 0x9000}, nil
+		}
+		authentication := func(ctx context.Context) (protocol.VerifyRequest, error) {
+			ctx, cancel := context.WithTimeout(ctx, time.Second)
+			defer cancel()
+
+			if _, err := d.Exchange(ctx, iso7816.Command{INS: 0xfd}); err != nil {
+				return protocol.VerifyRequest{}, err
+			}
+
+			return protocol.VerifyRequest{Reference: protocol.GlobalPIN, Data: data}, nil
 		}
 
-		return protocol.VerifyRequest{Reference: protocol.GlobalPIN, Data: data}, nil
-	}
+		if _, err := d.ExchangeAdministration(t.Context(), command, raw.key, authentication); err != nil {
+			t.Fatal(err)
+		}
 
-	if _, err := d.ExchangeAdministration(t.Context(), command, raw.key, authentication); err != nil {
-		t.Fatal(err)
-	}
+		if len(raw.requests) != 5 {
+			t.Fatalf("APDU count = %d, want 5", len(raw.requests))
+		}
 
-	if len(raw.requests) != 5 {
-		t.Fatalf("APDU count = %d, want 5", len(raw.requests))
-	}
+		if raw.requests[0][1] != 0xfd || raw.requests[1][1] != 0x87 || raw.requests[2][1] != 0x87 ||
+			!bytes.Equal(raw.requests[3], []byte{0, 0x20, 0, 0, 8, 1, 2, 3, 4, 5, 6, 0xff, 0xff}) ||
+			!bytes.Equal(raw.requests[4], []byte{0, 0xf8, 0, 0}) {
+			t.Errorf("unexpected source/authentication/VERIFY/command order: %x", raw.requests)
+		}
 
-	if raw.requests[0][1] != 0xfd || raw.requests[1][1] != 0x87 || raw.requests[2][1] != 0x87 ||
-		!bytes.Equal(raw.requests[3], []byte{0, 0x20, 0, 0, 8, 1, 2, 3, 4, 5, 6, 0xff, 0xff}) ||
-		!bytes.Equal(raw.requests[4], []byte{0, 0xf8, 0, 0}) {
-		t.Errorf("unexpected source/authentication/VERIFY/command order: %x", raw.requests)
-	}
-
-	if !bytes.Equal(data, make([]byte, len(data))) {
-		t.Error("owned authentication data was not cleared")
-	}
+		if !bytes.Equal(data, make([]byte, len(data))) {
+			t.Error("owned authentication data was not cleared")
+		}
+	})
 }
 
 func TestExchangeAdministrationStopsAfterPINFailure(t *testing.T) {

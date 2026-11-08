@@ -2,23 +2,11 @@ package protocol
 
 import (
 	"bytes"
-	"encoding/hex"
 	"errors"
 	"os"
 	"testing"
 	"time"
 )
-
-func biometricHex(t testing.TB, encoded string) []byte {
-	t.Helper()
-
-	data, err := hex.DecodeString(encoded)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	return data
-}
 
 func TestBiometricDataGSAInteroperability(t *testing.T) {
 	for _, tc := range []struct {
@@ -90,13 +78,18 @@ func TestEncodeBiometricDataWire(t *testing.T) {
 
 func TestParseBiometricDataRejectsMalformedExternalObjects(t *testing.T) {
 	date := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
 	valid := EncodeBiometricData(BiometricData{Header: BiometricHeader{SecurityOptions: 0x0d, CreationDate: date, ValidFrom: date, ValidUntil: date}})
+	if _, err := ParseBiometricData(valid); err != nil {
+		t.Fatalf("valid biometric object: %v", err)
+	}
 
 	for _, tc := range []struct {
 		name   string
 		mutate func([]byte) []byte
 	}{
-		{name: "duplicate BC", mutate: func(b []byte) []byte { return append(b, b...) }},
+		{name: "duplicate BC", mutate: func(b []byte) []byte { return append(b[:len(b)-2], b...) }},
+		{name: "duplicate EDC", mutate: func(b []byte) []byte { return append(b, 0xfe, 0) }},
 		{name: "invalid version", mutate: func(b []byte) []byte { b[2] = 4; return b }},
 		{name: "unsupported options", mutate: func(b []byte) []byte { b[3] = 0; return b }},
 		{name: "BDB length overflow", mutate: func(b []byte) []byte { b[4] = 0xff; return b }},

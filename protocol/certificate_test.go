@@ -2,62 +2,62 @@ package protocol
 
 import (
 	"bytes"
-	"compress/gzip"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"errors"
-	"math/big"
+	"fmt"
 	"testing"
-	"time"
 )
 
-func certificateDER(t testing.TB) []byte {
-	t.Helper()
+func TestCertificateObject(t *testing.T) {
+	// Independently list all certificate slots from SP 800-73-5 Part 1.
+	for _, tc := range []struct {
+		key    KeyReference
+		object Object
+	}{
+		{key: 0x9a, object: 0x5fc105},
+		{key: 0x9c, object: 0x5fc10a},
+		{key: 0x9d, object: 0x5fc10b},
+		{key: 0x9e, object: 0x5fc101},
+		{key: 0x82, object: 0x5fc10d},
+		{key: 0x83, object: 0x5fc10e},
+		{key: 0x84, object: 0x5fc10f},
+		{key: 0x85, object: 0x5fc110},
+		{key: 0x86, object: 0x5fc111},
+		{key: 0x87, object: 0x5fc112},
+		{key: 0x88, object: 0x5fc113},
+		{key: 0x89, object: 0x5fc114},
+		{key: 0x8a, object: 0x5fc115},
+		{key: 0x8b, object: 0x5fc116},
+		{key: 0x8c, object: 0x5fc117},
+		{key: 0x8d, object: 0x5fc118},
+		{key: 0x8e, object: 0x5fc119},
+		{key: 0x8f, object: 0x5fc11a},
+		{key: 0x90, object: 0x5fc11b},
+		{key: 0x91, object: 0x5fc11c},
+		{key: 0x92, object: 0x5fc11d},
+		{key: 0x93, object: 0x5fc11e},
+		{key: 0x94, object: 0x5fc11f},
+		{key: 0x95, object: 0x5fc120},
+	} {
+		t.Run(fmt.Sprintf("slot %02x", tc.key), func(t *testing.T) {
+			got, err := CertificateObject(tc.key)
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
+			if got != tc.object {
+				t.Errorf("CertificateObject = %x, want %x", got, tc.object)
+			}
+		})
 	}
 
-	template := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "PIV test certificate"},
-		NotBefore:    time.Unix(1700000000, 0),
-		NotAfter:     time.Unix(1800000000, 0),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
+	for _, key := range []KeyReference{0, 0x81, 0x96, 0x9b, 0xff} {
+		t.Run(fmt.Sprintf("unsupported slot %02x", key), func(t *testing.T) {
+			object, err := CertificateObject(key)
+			if err == nil || object != 0 {
+				t.Errorf("CertificateObject = %x, %v; want no object and an error", object, err)
+			}
+		})
 	}
-
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	return der
-}
-
-func certificateGZIP(t testing.TB, value []byte) []byte {
-	t.Helper()
-
-	var buffer bytes.Buffer
-
-	writer := gzip.NewWriter(&buffer)
-	if _, err := writer.Write(value); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	return buffer.Bytes()
-}
-
-func certificateObject(value []byte, info byte) []byte {
-	data := append([]byte{0x70, 0x82, byte(len(value) >> 8), byte(len(value))}, value...)
-	return append(data, 0x71, 1, info, 0xfe, 0)
 }
 
 func TestEncodeCertificateWire(t *testing.T) {

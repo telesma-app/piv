@@ -10,6 +10,14 @@ import (
 	"github.com/telesma-app/iso7816"
 )
 
+func readTLV(tag byte, data []byte) []byte {
+	if len(data) < 128 {
+		return append([]byte{tag, byte(len(data))}, data...)
+	}
+
+	return append([]byte{tag, 0x82, byte(len(data) >> 8), byte(len(data))}, data...)
+}
+
 type exchangeStep struct {
 	command  []byte
 	response iso7816.Response

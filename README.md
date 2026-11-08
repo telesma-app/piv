@@ -138,7 +138,16 @@ go vet ./...
 make lint
 ```
 
-The normal test suite does not require hardware.
+The normal test suite runs unit, in-process integration, and conformance tests
+without hardware. Unit tests are grouped by production owner;
+`*_integration_test.go` files exercise compositions of real layers over fake
+card connections, and `*_conformance_test.go` files verify independent fixtures.
+These file names describe scope; all three categories run with `go test ./...`.
+
+Hardware tests live in `backend/pcsc/*_hardware_test.go` and require explicit
+opt-in through `PIV_TEST=1`, `PIV_SM_TEST=1`, or `PIV_SCP11_TEST=1`.
+Secure-channel tests also require a reader and independently trusted key or CA
+material.
 
 Commands follow SP 800-73-5 Part 2; data object helpers follow Part 1,
 Section 3. Models, encoders and parsers are grouped by object.

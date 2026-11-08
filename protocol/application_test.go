@@ -9,6 +9,20 @@ import (
 	"github.com/telesma-app/bertlv"
 )
 
+func TestSelectCommandWire(t *testing.T) {
+	command := SelectCommand()
+
+	got, err := command.MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []byte{0, 0xa4, 4, 0, 9, 0xa0, 0, 0, 3, 8, 0, 0, 0x10, 0, 0}
+	if !bytes.Equal(got, want) {
+		t.Errorf("SELECT APDU = %x, want %x", got, want)
+	}
+}
+
 func TestParseApplicationPropertyTemplate(t *testing.T) {
 	// SELECT metadata can split the PIV identifier into the PIX in 4F and the
 	// NIST RID in 79/4F. Keep both wire values instead of manufacturing an AID.

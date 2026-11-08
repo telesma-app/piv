@@ -13,53 +13,13 @@ import (
 	"sync"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/telesma-app/iso7816"
 	"github.com/telesma-app/piv/client"
 	"github.com/telesma-app/piv/protocol"
 	"github.com/telesma-app/piv/transport"
 )
-
-func newRSADecryptionPeer(t testing.TB) (*PrivateKey, *signaturePeer) {
-	t.Helper()
-	private := signingRSA(t)
-	raw := &signaturePeer{
-		t: t, reference: protocol.KeyManagement, algorithm: protocol.RSA2048,
-		rsa: private, closed: make(chan struct{}),
-		authenticationReference: protocol.ApplicationPIN,
-		authenticationData:      []byte{'1', '2', '3', '4', '5', '6', 0xff, 0xff},
-	}
-	device := New(raw)
-
-	t.Cleanup(func() { _ = device.Close() })
-
-	key, err := device.PrivateKey(protocol.KeyManagement, &private.PublicKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	return key, raw
-}
-
-func rsaCiphertext(t testing.TB, publicKey *rsa.PublicKey, message []byte, opts crypto.DecrypterOpts) []byte {
-	t.Helper()
-
-	var ciphertext []byte
-
-	var err error
-
-	if oaep, ok := opts.(*rsa.OAEPOptions); ok {
-		ciphertext, err = rsa.EncryptOAEP(oaep.Hash.New(), rand.Reader, publicKey, message, oaep.Label)
-	} else {
-		ciphertext, err = rsa.EncryptPKCS1v15(rand.Reader, publicKey, message) //nolint:staticcheck // Legacy PIV compatibility requires PKCS#1 v1.5 support.
-	}
-
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	return ciphertext
-}
 
 func TestRSADecryptOAEPWithStandardEncryption(t *testing.T) {
 	for _, hash := range []crypto.Hash{
@@ -329,50 +289,55 @@ func TestRSADecryptPaddingErrorsAndEncodedMessageCleanup(t *testing.T) {
 }
 
 func TestRSADecryptAuthenticationOwnership(t *testing.T) {
-	for _, failed := range []bool{false, true} {
+	synctest.Test(t, func(t *testing.T) {
+		for _, failed := range []bool{false, true} {
+			key, raw := newRSADecryptionPeer(t)
+			raw.authenticationReference = protocol.GlobalPIN
+			ciphertext := rsaCiphertext(t, &raw.rsa.PublicKey, []byte("message"), nil)
+
+			data := bytes.Clone(raw.authenticationData)
+			if failed {
+				data[0] = '0'
+			}
+
+			authentication := func(ctx context.Context) (protocol.VerifyRequest, error) {
+				ctx, cancel := context.WithTimeout(ctx, time.Second)
+				defer cancel()
+
+				if _, err := key.device.ReferenceStatus(ctx, protocol.GlobalPIN); err != nil {
+					return protocol.VerifyRequest{}, err
+				}
+
+				return protocol.VerifyRequest{Reference: protocol.GlobalPIN, Data: data}, nil
+			}
+
+			_, err := key.Decrypt(t.Context(), nil, ciphertext, nil, authentication)
+			if failed {
+				var referenceError *client.ReferenceDataError
+				if !errors.As(err, &referenceError) || raw.signatures != 0 {
+					t.Fatalf("Decrypt after wrong PIN = %v, GA calls=%d", err, raw.signatures)
+				}
+			} else if err != nil || raw.statuses != 1 || raw.verifies != 1 || raw.signatures != 1 {
+				t.Fatalf("Decrypt = %v, status/VERIFY/GA=%d/%d/%d", err, raw.statuses, raw.verifies, raw.signatures)
+			}
+
+			if !bytes.Equal(data, make([]byte, len(data))) {
+				t.Fatal("Decrypt did not clear owned authentication data")
+			}
+		}
+
 		key, raw := newRSADecryptionPeer(t)
-		raw.authenticationReference = protocol.GlobalPIN
-		ciphertext := rsaCiphertext(t, &raw.rsa.PublicKey, []byte("message"), nil)
-
-		data := bytes.Clone(raw.authenticationData)
-		if failed {
-			data[0] = '0'
+		data := []byte{1, 2, 3}
+		cause := errors.New("authentication acquisition failed")
+		authentication := func(context.Context) (protocol.VerifyRequest, error) {
+			return protocol.VerifyRequest{Reference: protocol.PrimaryFingerOCC, Data: data}, cause
 		}
 
-		authentication := func(ctx context.Context) (protocol.VerifyRequest, error) {
-			if _, err := key.device.ReferenceStatus(ctx, protocol.GlobalPIN); err != nil {
-				return protocol.VerifyRequest{}, err
-			}
-
-			return protocol.VerifyRequest{Reference: protocol.GlobalPIN, Data: data}, nil
+		_, err := key.Decrypt(t.Context(), nil, make([]byte, raw.rsa.Size()), nil, authentication)
+		if !errors.Is(err, cause) || !bytes.Equal(data, []byte{1, 2, 3}) || len(raw.instructions) != 0 {
+			t.Fatalf("Decrypt after source failure = %v, source data=%x, instructions=%x", err, data, raw.instructions)
 		}
-
-		_, err := key.Decrypt(t.Context(), nil, ciphertext, nil, authentication)
-		if failed {
-			var referenceError *client.ReferenceDataError
-			if !errors.As(err, &referenceError) || raw.signatures != 0 {
-				t.Fatalf("Decrypt after wrong PIN = %v, GA calls=%d", err, raw.signatures)
-			}
-		} else if err != nil || raw.statuses != 1 || raw.verifies != 1 || raw.signatures != 1 {
-			t.Fatalf("Decrypt = %v, status/VERIFY/GA=%d/%d/%d", err, raw.statuses, raw.verifies, raw.signatures)
-		}
-
-		if !bytes.Equal(data, make([]byte, len(data))) {
-			t.Fatal("Decrypt did not clear owned authentication data")
-		}
-	}
-
-	key, raw := newRSADecryptionPeer(t)
-	data := []byte{1, 2, 3}
-	cause := errors.New("authentication acquisition failed")
-	authentication := func(context.Context) (protocol.VerifyRequest, error) {
-		return protocol.VerifyRequest{Reference: protocol.PrimaryFingerOCC, Data: data}, cause
-	}
-
-	_, err := key.Decrypt(t.Context(), nil, make([]byte, raw.rsa.Size()), nil, authentication)
-	if !errors.Is(err, cause) || !bytes.Equal(data, []byte{1, 2, 3}) || len(raw.instructions) != 0 {
-		t.Fatalf("Decrypt after source failure = %v, source data=%x, instructions=%x", err, data, raw.instructions)
-	}
+	})
 }
 
 func TestQueuedRSADecryptCancellationClearsAuthentication(t *testing.T) {
@@ -483,6 +448,63 @@ func TestRSADecryptCompletedResultSurvivesCancellation(t *testing.T) {
 	plaintext, err := key.Decrypt(ctx, nil, ciphertext, nil, nil)
 	if err != nil || !bytes.Equal(plaintext, message) || raw.closeCalls != 0 {
 		t.Fatalf("completed Decrypt = %x, %v, closes=%d", plaintext, err, raw.closeCalls)
+	}
+}
+
+func TestRSADecryptInvalidationClosesSession(t *testing.T) {
+	for _, phase := range []string{"VERIFY", "GENERAL AUTHENTICATE"} {
+		t.Run(phase, func(t *testing.T) {
+			private, err := rsa.GenerateKey(rand.Reader, 1024)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			ciphertext := make([]byte, private.Size())
+			cause := errors.New("card removed")
+			closeErr := errors.New("disconnect failed")
+			invalidated := &transport.DeviceInvalidatedError{Err: cause}
+
+			steps := []exchangeStep{{
+				command: []byte{0, 0x20, 0, 0x80, 8, '1', '2', '3', '4', '5', '6', 0xff, 0xff}, err: invalidated,
+			}}
+			if phase == "GENERAL AUTHENTICATE" {
+				steps[0].err = nil
+				steps[0].response = iso7816.Response{Status: 0x9000}
+
+				command := append([]byte{0, 0x87, 6, 0x9d, 136, 0x7c, 0x81, 133, 0x82, 0, 0x81, 0x81, 128}, ciphertext...)
+				steps = append(steps, exchangeStep{command: append(command, 0), err: invalidated})
+			}
+
+			device, raw := newDevice(t, steps...)
+			raw.closeErr = closeErr
+
+			key, err := device.PrivateKey(protocol.KeyManagement, &private.PublicKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			authentication := PINAuthentication(protocol.ApplicationPIN, signingPIN)
+
+			plaintext, err := key.Decrypt(t.Context(), nil, ciphertext, nil, authentication)
+
+			var got *transport.DeviceInvalidatedError
+			if plaintext != nil || !errors.As(err, &got) || got != invalidated || !errors.Is(err, cause) || !errors.Is(err, closeErr) {
+				t.Errorf("Decrypt = %x, %v; want no plaintext, original invalidation and close error", plaintext, err)
+			}
+
+			if raw.calls != len(steps) || raw.closeCalls != 1 {
+				t.Errorf("after invalidation: exchanges=%d closes=%d, want %d and 1", raw.calls, raw.closeCalls, len(steps))
+			}
+
+			plaintext, err = key.Decrypt(t.Context(), nil, ciphertext, nil, authentication)
+			if plaintext != nil || !errors.Is(err, io.ErrClosedPipe) {
+				t.Errorf("Decrypt after invalidation = %x, %v; want closed pipe", plaintext, err)
+			}
+
+			if err := device.Close(); !errors.Is(err, closeErr) || raw.calls != len(steps) || raw.closeCalls != 1 {
+				t.Errorf("Close after invalidation = %v; exchanges=%d closes=%d, want %d and 1", err, raw.calls, raw.closeCalls, len(steps))
+			}
+		})
 	}
 }
 

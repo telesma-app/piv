@@ -2,110 +2,18 @@ package sm
 
 import (
 	"bytes"
-	"crypto"
 	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
-	"crypto/sha1"
-	"crypto/sha256"
-	"crypto/sha512"
-	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"errors"
-	"math/big"
 	"testing"
-	"time"
 
 	"github.com/telesma-app/bertlv"
 	"github.com/telesma-app/piv/protocol"
 )
-
-func fixtureCertificate(t testing.TB, card *ecdh.PublicKey, signer *ecdsa.PrivateKey, issuer [8]byte) []byte {
-	t.Helper()
-
-	body := certificateBody(issuer, make([]byte, 16), card.Bytes(), 0)
-
-	return signCertificate(t, body, signer, false)
-}
-
-func certificateBody(issuer [8]byte, subject, point []byte, role byte) []byte {
-	body := bertlv.Append(nil, 0x5f29, []byte{0x80})
-	body = bertlv.Append(body, 0x42, issuer[:])
-	body = bertlv.Append(body, 0x5f20, subject)
-
-	oid := []byte{0x2b, 0x81, 4, 0, 0x22}
-	if len(point) == 65 {
-		oid = []byte{0x2a, 0x86, 0x48, 0xce, 0x3d, 3, 1, 7}
-	}
-
-	public := bertlv.Append(nil, 6, oid)
-	public = bertlv.Append(public, 0x86, point)
-	body = bertlv.Append(body, 0x7f49, public)
-
-	return bertlv.Append(body, 0x5f4c, []byte{role})
-}
-
-func signCertificate(t testing.TB, body []byte, key crypto.PrivateKey, intermediate bool) []byte {
-	t.Helper()
-
-	algorithm := pkix.AlgorithmIdentifier{Algorithm: asn1.ObjectIdentifier{1, 2, 840, 10045, 4, 3, 3}}
-
-	var (
-		signature []byte
-		err       error
-	)
-
-	if intermediate {
-		algorithm = pkix.AlgorithmIdentifier{Algorithm: oidRSASHA256, Parameters: asn1.NullRawValue}
-		digest := sha256.Sum256(body)
-		signature, err = rsa.SignPKCS1v15(rand.Reader, key.(*rsa.PrivateKey), crypto.SHA256, digest[:])
-	} else if key.(*ecdsa.PrivateKey).Curve == elliptic.P256() {
-		algorithm.Algorithm = asn1.ObjectIdentifier{1, 2, 840, 10045, 4, 3, 2}
-		digest := sha256.Sum256(body)
-		signature, err = ecdsa.SignASN1(rand.Reader, key.(*ecdsa.PrivateKey), digest[:])
-	} else {
-		digest := sha512.Sum384(body)
-		signature, err = ecdsa.SignASN1(rand.Reader, key.(*ecdsa.PrivateKey), digest[:])
-	}
-
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	digitalSignature, err := asn1.Marshal(struct {
-		Algorithm pkix.AlgorithmIdentifier
-		Signature asn1.BitString
-	}{Algorithm: algorithm, Signature: asn1.BitString{Bytes: signature, BitLength: len(signature) * 8}})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	return bertlv.Append(nil, 0x7f21, bertlv.Append(body, 0x5f37, digitalSignature))
-}
-
-func certificateKeys(t testing.TB) (*ecdh.PrivateKey, *ecdsa.PrivateKey) {
-	t.Helper()
-	return certificateKeysForSuite(t, testCipherSuite(t, protocol.CipherSuite7))
-}
-
-func certificateKeysForSuite(t testing.TB, suite cipherSuite) (*ecdh.PrivateKey, *ecdsa.PrivateKey) {
-	t.Helper()
-
-	card, err := suite.curve.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	signer, err := ecdsa.GenerateKey(suite.signingCurve, rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	return card, signer
-}
 
 func TestCertificateAuthenticatesExactSignedBytes(t *testing.T) {
 	testCipherSuites(t, func(t *testing.T, suite cipherSuite) {
@@ -164,13 +72,6 @@ func TestCertificateRejectsTamperingAndWrongTrust(t *testing.T) {
 			}
 		})
 	}
-}
-
-func mutateCertificate(raw []byte, index int) []byte {
-	mutated := bytes.Clone(raw)
-	mutated[index] ^= 1
-
-	return mutated
 }
 
 func TestCertificateRejectsOtherCipherSuite(t *testing.T) {
@@ -302,54 +203,6 @@ func TestCertificateRejectsSignatureEncodingAndAlgorithm(t *testing.T) {
 	})
 }
 
-func appendAlgorithmMembers(t testing.TB, signature, extra []byte) []byte {
-	t.Helper()
-
-	_, value, _, err := bertlv.Parse(signature)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, algorithm, rest, err := bertlv.Parse(value)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	algorithm = append(bytes.Clone(algorithm), extra...)
-	value = append(bertlv.Append(nil, 0x30, algorithm), rest...)
-
-	return bertlv.Append(nil, 0x30, value)
-}
-
-func appendCertificateAlgorithmMembers(t testing.TB, raw, extra []byte) []byte {
-	t.Helper()
-
-	_, body, _, err := bertlv.Parse(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	for data := body; len(data) != 0; {
-		tag, value, rest, err := bertlv.Parse(data)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		if tag == 0x5f37 {
-			body = bytes.Clone(body[:len(body)-len(data)])
-			body = bertlv.Append(body, 0x5f37, appendAlgorithmMembers(t, value, extra))
-
-			return bertlv.Append(nil, 0x7f21, body)
-		}
-
-		data = rest
-	}
-
-	t.Fatal("fixture certificate lacks signature")
-
-	return nil
-}
-
 func certificateBodyWith(t testing.TB, issuer [8]byte, point []byte, replace uint32, replacement []byte) []byte {
 	t.Helper()
 
@@ -371,116 +224,4 @@ func certificateBodyWith(t testing.TB, issuer [8]byte, point []byte, replace uin
 	}
 
 	return body
-}
-
-func TestIntermediateCertificateTrust(t *testing.T) {
-	testCipherSuites(t, func(t *testing.T, suite cipherSuite) {
-		card, signer := certificateKeysForSuite(t, suite)
-
-		root, err := rsa.GenerateKey(rand.Reader, 2048)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		issuer := [8]byte{1, 2, 3, 4, 5, 6, 7, 8}
-
-		signerECDH, err := signer.ECDH()
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		point := signerECDH.PublicKey().Bytes()
-		identifier := sha1.Sum(point)
-		body := certificateBody(issuer, identifier[:8], point, 0x12)
-		body = append([]byte{0x5f, 0x29, 0x81, 1}, body[3:]...)
-		intermediate := signCertificate(t, body, root, true)
-		guid := [16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
-		raw := signCertificate(t, certificateBody([8]byte(identifier[:8]), guid[:], card.PublicKey().Bytes(), 0), signer, false)
-
-		caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
-		caTemplate := &x509.Certificate{
-			SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "test root"},
-			NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour),
-			BasicConstraintsValid: true, IsCA: true, KeyUsage: x509.KeyUsageCertSign,
-		}
-
-		caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		ca, err := x509.ParseCertificate(caDER)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		signerTemplate := &x509.Certificate{
-			SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "RSA content signer"},
-			NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour),
-			KeyUsage: x509.KeyUsageDigitalSignature, UnknownExtKeyUsage: []asn1.ObjectIdentifier{oidContentSigning},
-			SubjectKeyId: issuer[:],
-		}
-
-		signerDER, err := x509.CreateCertificate(rand.Reader, signerTemplate, ca, &root.PublicKey, caKey)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		object := bertlv.Append(nil, 0x70, signerDER)
-		object = append(object, 0x71, 1, 0)
-		object = append(object, intermediate...)
-		object = append(object, 0xfe, 0)
-
-		signerData, err := protocol.ParseSecureMessagingCertificateSigner(object)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		contentSigner, err := x509.ParseCertificate(signerData.CertificateDER)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		roots := x509.NewCertPool()
-		roots.AddCert(ca)
-
-		trust, err := TrustFromCertificate(contentSigner, x509.VerifyOptions{Roots: roots, CurrentTime: now}, signerData.IntermediateCVC)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		got, err := verifyCertificate(suite, raw, trust)
-		if err != nil || got.PublicKey == nil || !bytes.Equal(got.PublicKey.Bytes(), card.PublicKey().Bytes()) {
-			t.Fatalf("verify with intermediate = %v, %v", got, err)
-		}
-
-		if got.GUID != guid || !bytes.Equal(got.Raw, raw) {
-			t.Fatalf("verified card identity = %+v, want GUID %x, CVC %x", got, guid, raw)
-		}
-
-		for _, test := range []struct {
-			name         string
-			intermediate []byte
-			want         error
-		}{
-			{name: "signature tampered", intermediate: mutateCertificate(intermediate, len(intermediate)-1), want: ErrAuthentication},
-			{name: "wrong issuer", intermediate: signCertificate(t, certificateBody([8]byte{9}, identifier[:8], point, 0x12), root, true), want: ErrAuthentication},
-			{name: "wrong subject identifier", intermediate: signCertificate(t, certificateBody(issuer, make([]byte, 8), point, 0x12), root, true), want: ErrAuthentication},
-			{name: "extra RSA AlgorithmIdentifier member", intermediate: appendCertificateAlgorithmMembers(t, intermediate, []byte{5, 0}), want: ErrInvalidResponse},
-		} {
-			t.Run(test.name, func(t *testing.T) {
-				badTrust := trust
-
-				badTrust.IntermediateCVC = test.intermediate
-				if _, err := verifyCertificate(suite, raw, badTrust); !errors.Is(err, test.want) {
-					t.Errorf("verify = %v, want %v", err, test.want)
-				}
-			})
-		}
-	})
 }

@@ -57,30 +57,58 @@ func TestVerifySecurityObjectAndEveryDataGroup(t *testing.T) {
 	}
 }
 
-func securityObjectKeyID(t testing.TB, cms []byte, subjectKeyID []byte) []byte {
-	t.Helper()
+func TestVerifyDataGroups(t *testing.T) {
+	for _, algorithm := range []crypto.Hash{crypto.SHA256, crypto.SHA384} {
+		t.Run(algorithm.String(), func(t *testing.T) {
+			object := protocol.SecurityObjectData{Mapping: []protocol.DataGroupMapping{
+				{DataGroup: 1, ContainerID: 0xdb00},
+				{DataGroup: 2, ContainerID: 0x3001},
+			}}
+			first := algorithm.New()
+			first.Write([]byte("abc"))
 
-	signed, err := parseCMS(cms)
-	if err != nil {
-		t.Fatal(err)
+			second := algorithm.New()
+			lds := protocol.LDSSecurityObject{HashAlgorithm: algorithm, Hashes: []protocol.DataGroupHash{
+				{DataGroup: 2, Digest: second.Sum(nil)},
+				{DataGroup: 1, Digest: first.Sum(nil)},
+			}}
+
+			for _, tc := range []struct {
+				name string
+				data map[protocol.ContainerID][]byte
+				want *DataGroupError
+			}{
+				{name: "all containers", data: map[protocol.ContainerID][]byte{0xdb00: []byte("abc"), 0x3001: nil}},
+				{name: "empty container", data: map[protocol.ContainerID][]byte{0xdb00: []byte("abc"), 0x3001: {}}},
+				{name: "extra container", data: map[protocol.ContainerID][]byte{0xdb00: []byte("abc"), 0x3001: nil, 0x6030: []byte("ignored")}},
+				{name: "missing first container", data: map[protocol.ContainerID][]byte{0x3001: nil}, want: &DataGroupError{ContainerID: 0xdb00, Missing: true}},
+				{name: "missing second container", data: map[protocol.ContainerID][]byte{0xdb00: []byte("abc")}, want: &DataGroupError{ContainerID: 0x3001, Missing: true}},
+				{name: "changed first container", data: map[protocol.ContainerID][]byte{0xdb00: []byte("abd"), 0x3001: nil}, want: &DataGroupError{ContainerID: 0xdb00}},
+				{name: "changed second container", data: map[protocol.ContainerID][]byte{0xdb00: []byte("abc"), 0x3001: {0}}, want: &DataGroupError{ContainerID: 0x3001}},
+				{name: "present empty first container", data: map[protocol.ContainerID][]byte{0xdb00: nil, 0x3001: nil}, want: &DataGroupError{ContainerID: 0xdb00}},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					err := VerifyDataGroups(object, lds, tc.data)
+					if tc.want == nil {
+						if err != nil {
+							t.Fatalf("VerifyDataGroups = %v", err)
+						}
+
+						return
+					}
+
+					var got *DataGroupError
+					if !errors.Is(err, ErrIntegrity) || !errors.As(err, &got) {
+						t.Fatalf("VerifyDataGroups = %v, want DataGroupError wrapping ErrIntegrity", err)
+					}
+
+					if *got != *tc.want {
+						t.Errorf("DataGroupError = %+v, want %+v", *got, *tc.want)
+					}
+				})
+			}
+		})
 	}
-	// SID is not part of the signed attributes. Change the identifier while
-	// retaining the independently generated signature and exact attributes.
-	signed.Signers[0].Raw = nil
-	signed.Signers[0].Version = 3
-	signed.Signers[0].SID = asn1.RawValue{Class: asn1.ClassContextSpecific, Tag: 0, Bytes: subjectKeyID}
-
-	body, err := asn1.Marshal(signed)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	der, err := asn1.Marshal(contentInfo{Type: oidSignedData, Content: asn1.RawValue{Class: asn1.ClassContextSpecific, Tag: 0, IsCompound: true, Bytes: body}})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	return der
 }
 
 func TestSecurityObjectDigestAndSignerProfiles(t *testing.T) {

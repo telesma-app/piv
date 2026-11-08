@@ -67,11 +67,11 @@ func (c *framingCard) Transmit(_ context.Context, apdu []byte) ([]byte, error) {
 	c.calls++
 
 	if call == 0 {
-		if !bytes.Equal(apdu, recordHex(c.t, "00a4040009a0000003080000100000")) {
+		if !bytes.Equal(apdu, decodeHex(c.t, "00a4040009a0000003080000100000")) {
 			c.t.Fatalf("SELECT = %x", apdu)
 		}
 
-		return recordHex(c.t, "61114f0600001000010079074f05a0000003089000"), nil
+		return decodeHex(c.t, "61114f0600001000010079074f05a0000003089000"), nil
 	}
 
 	wantCounter := byte(1)
@@ -85,7 +85,7 @@ func (c *framingCard) Transmit(_ context.Context, apdu []byte) ([]byte, error) {
 
 	switch call {
 	case 1, 2:
-		if len(apdu) != 260 || !bytes.Equal(apdu[:5], recordHex(c.t, "1ccb3fffff")) {
+		if len(apdu) != 260 || !bytes.Equal(apdu[:5], decodeHex(c.t, "1ccb3fffff")) {
 			c.t.Fatalf("intermediate command %d = %x", call, apdu)
 		}
 
@@ -93,36 +93,36 @@ func (c *framingCard) Transmit(_ context.Context, apdu []byte) ([]byte, error) {
 
 		return []byte{0x90, 0}, nil
 	case 3:
-		if len(apdu) != 122 || !bytes.Equal(apdu[:5], recordHex(c.t, "0ccb3fff74")) || apdu[len(apdu)-1] != 0 {
+		if len(apdu) != 122 || !bytes.Equal(apdu[:5], decodeHex(c.t, "0ccb3fff74")) || apdu[len(apdu)-1] != 0 {
 			c.t.Fatalf("final command fragment = %x", apdu)
 		}
 
 		c.command = append(c.command, apdu[5:len(apdu)-1]...)
 
 		digest := sha256.Sum256(c.command)
-		if !bytes.Equal(digest[:], recordHex(c.t, c.vector.commandHash)) {
+		if !bytes.Equal(digest[:], decodeHex(c.t, c.vector.commandHash)) {
 			c.t.Fatalf("assembled command SHA-256 = %x", digest)
 		}
 
 		return append(bytes.Clone(c.response[:256]), 0x61, 0), nil
 	case 4:
-		if !bytes.Equal(apdu, recordHex(c.t, "00c0000000")) {
+		if !bytes.Equal(apdu, decodeHex(c.t, "00c0000000")) {
 			c.t.Fatalf("first GET RESPONSE = %x, want CLA 00 and Le 256", apdu)
 		}
 
 		return append(bytes.Clone(c.response[256:512]), 0x61, 0xd3), nil
 	case 5:
-		if !bytes.Equal(apdu, recordHex(c.t, "00c00000d3")) {
+		if !bytes.Equal(apdu, decodeHex(c.t, "00c00000d3")) {
 			c.t.Fatalf("second GET RESPONSE = %x, want CLA 00 and Le 211", apdu)
 		}
 
 		return append(bytes.Clone(c.response[512:]), 0x90, 0), nil
 	case 6:
-		if !bytes.Equal(apdu, recordHex(c.t, c.vector.nextAPDU)) {
+		if !bytes.Equal(apdu, decodeHex(c.t, c.vector.nextAPDU)) {
 			c.t.Fatalf("following protected VERIFY = %x", apdu)
 		}
 
-		return recordHex(c.t, c.vector.nextResponse), nil
+		return decodeHex(c.t, c.vector.nextResponse), nil
 	default:
 		c.t.Fatalf("unexpected APDU %d: %x", call, apdu)
 		return nil, nil
@@ -156,7 +156,7 @@ func checkTransportFraming(t *testing.T, vector framingVector) {
 	response = append(response, mac[:8]...)
 
 	digest := sha256.Sum256(response)
-	if !bytes.Equal(digest[:], recordHex(t, vector.responseHash)) {
+	if !bytes.Equal(digest[:], decodeHex(t, vector.responseHash)) {
 		t.Fatalf("protected response SHA-256 = %x", digest)
 	}
 
@@ -200,7 +200,7 @@ func checkTransportFraming(t *testing.T, vector framingVector) {
 		t.Errorf("after chained exchange: raw calls = %d, counter = %x", raw.calls, transport.session.counter)
 	}
 
-	if !bytes.Equal(transport.session.commandChain[:], recordHex(t, vector.commandChain)) || !bytes.Equal(transport.session.responseChain[:], recordHex(t, vector.responseChain)) {
+	if !bytes.Equal(transport.session.commandChain[:], decodeHex(t, vector.commandChain)) || !bytes.Equal(transport.session.responseChain[:], decodeHex(t, vector.responseChain)) {
 		t.Errorf("logical command/response chains = %x / %x", transport.session.commandChain, transport.session.responseChain)
 	}
 

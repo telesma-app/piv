@@ -3,6 +3,7 @@ package card
 import (
 	"errors"
 	"io"
+	"sync"
 	"testing"
 	"testing/synctest"
 
@@ -114,11 +115,15 @@ func TestCheckVCIRequiresPolicy(t *testing.T) {
 
 func TestCheckVCISerializesPolicyAndPairingCheck(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		started, release := make(chan struct{}), make(chan struct{})
+		started, proceed := make(chan struct{}), make(chan struct{})
+
+		release := sync.OnceFunc(func() { close(proceed) })
+		defer release()
+
 		discovery := vciDiscovery(protocol.PINUsageVCI)
 		discovery.after = func() {
 			close(started)
-			<-release
+			<-proceed
 		}
 
 		d, raw := newSMDevice(t,
@@ -127,26 +132,53 @@ func TestCheckVCISerializesPolicyAndPairingCheck(t *testing.T) {
 			exchangeStep{command: []byte{0, 0x20, 0xff, 0x98}, response: iso7816.Response{Status: 0x9000}},
 		)
 		vciErr, resetErr := make(chan error, 1), make(chan error, 1)
+		vciDone := make(chan struct{})
 
-		go func() { vciErr <- d.CheckVCI(t.Context()) }()
+		go func() {
+			defer close(vciDone)
 
-		<-started
+			vciErr <- d.CheckVCI(t.Context())
+		}()
 
-		go func() { resetErr <- d.ResetSecurityStatus(t.Context(), protocol.PairingCode) }()
+		defer func() {
+			release()
+			receive(t, vciDone, "VCI worker did not stop after release")
+		}()
+
+		receive(t, started, "VCI workflow did not start reading discovery")
+
+		resetDone := make(chan struct{})
+
+		go func() {
+			defer close(resetDone)
+
+			resetErr <- d.ResetSecurityStatus(t.Context(), protocol.PairingCode)
+		}()
+
+		defer func() {
+			release()
+			receive(t, resetDone, "reset worker did not stop after release")
+		}()
 
 		synctest.Wait()
+
+		select {
+		case err := <-resetErr:
+			t.Fatalf("reset completed during the VCI workflow: %v", err)
+		default:
+		}
 
 		if raw.calls != 1 {
 			t.Fatalf("queued operation performed I/O during VCI workflow: %d exchanges", raw.calls)
 		}
 
-		close(release)
+		release()
 
-		if err := <-vciErr; err != nil {
+		if err := receive(t, vciErr, "VCI workflow did not finish after release"); err != nil {
 			t.Fatal(err)
 		}
 
-		if err := <-resetErr; err != nil {
+		if err := receive(t, resetErr, "queued reset did not finish after VCI"); err != nil {
 			t.Fatal(err)
 		}
 	})

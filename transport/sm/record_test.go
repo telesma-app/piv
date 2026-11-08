@@ -3,34 +3,11 @@ package sm
 import (
 	"bytes"
 	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"testing"
 
 	"github.com/telesma-app/iso7816"
 )
-
-func recordHex(t testing.TB, value string) []byte {
-	t.Helper()
-
-	data, err := hex.DecodeString(value)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	return data
-}
-
-func recordKeys() sessionKeys {
-	keys := sessionKeys{keySize: 32}
-	for i := range 32 {
-		keys.enc[i] = byte(i)
-		keys.mac[i] = byte(i + 32)
-		keys.rmac[i] = byte(i + 64)
-	}
-
-	return keys
-}
 
 type recordVector struct {
 	command   iso7816.Command
@@ -48,7 +25,7 @@ type recordVector struct {
 func TestRecordVectors(t *testing.T) {
 	tests := []recordVector{
 		{
-			command:   iso7816.Command{INS: 0xcb, P1: 0x3f, P2: 0xff, Data: recordHex(t, "5c017e"), Le: 256},
+			command:   iso7816.Command{INS: 0xcb, P1: 0x3f, P2: 0xff, Data: decodeHex(t, "5c017e"), Le: 256},
 			protected: "871101b96792d98745219f449f62ad46d845d49701008e08743b85305ccd6bea",
 			cmac:      "743b85305ccd6beae81e33ffdc49966f",
 			response:  "872101ec0be757fe838d768f1362238a19a718761c2481b8a50d8924263c195fa87263990290008e08190ea8a6548b0e15",
@@ -65,7 +42,7 @@ func TestRecordVectors(t *testing.T) {
 			status:    0x63c3,
 		},
 		{
-			command:   iso7816.Command{INS: 0x20, P2: 0x80, Data: recordHex(t, "313233343536ffff")},
+			command:   iso7816.Command{INS: 0x20, P2: 0x80, Data: decodeHex(t, "313233343536ffff")},
 			protected: "871101c9c362e04342f43b4b8ccd378e5188348e08d85b513128a8c2c2",
 			cmac:      "d85b513128a8c2c29646ee9debabae68",
 			response:  "990290008e08778c3134b1df66fc",
@@ -93,7 +70,7 @@ func checkRecordVectors(t *testing.T, keySize int, tests []recordVector) {
 				t.Fatalf("protect vector %d: %v", i, err)
 			}
 
-			if !bytes.Equal(protected.Data, recordHex(t, test.protected)) {
+			if !bytes.Equal(protected.Data, decodeHex(t, test.protected)) {
 				t.Errorf("vector %d protected data = %x, want %s", i, protected.Data, test.protected)
 			}
 
@@ -101,7 +78,7 @@ func checkRecordVectors(t *testing.T, keySize int, tests []recordVector) {
 				t.Errorf("vector %d protected header = %+v", i, protected)
 			}
 
-			if !bytes.Equal(next[:], recordHex(t, test.cmac)) {
+			if !bytes.Equal(next[:], decodeHex(t, test.cmac)) {
 				t.Errorf("vector %d C-MAC = %x, want %s", i, next, test.cmac)
 			}
 
@@ -109,16 +86,16 @@ func checkRecordVectors(t *testing.T, keySize int, tests []recordVector) {
 				t.Errorf("vector %d protect committed state before transmission", i)
 			}
 
-			response, err := session.unprotect(iso7816.Response{Data: recordHex(t, test.response), Status: 0x9000}, next)
+			response, err := session.unprotect(iso7816.Response{Data: decodeHex(t, test.response), Status: 0x9000}, next)
 			if err != nil {
 				t.Fatalf("unprotect vector %d: %v", i, err)
 			}
 
-			if !bytes.Equal(response.Data, recordHex(t, test.plaintext)) || response.Status != test.status {
+			if !bytes.Equal(response.Data, decodeHex(t, test.plaintext)) || response.Status != test.status {
 				t.Errorf("vector %d response = %+v, want data %s status %s", i, response, test.plaintext, test.status)
 			}
 
-			if !bytes.Equal(session.responseChain[:], recordHex(t, test.rmac)) || session.commandChain != next {
+			if !bytes.Equal(session.responseChain[:], decodeHex(t, test.rmac)) || session.commandChain != next {
 				t.Errorf("vector %d MAC chains = %x / %x", i, session.commandChain, session.responseChain)
 			}
 
@@ -134,7 +111,7 @@ func TestCS2RecordVectors(t *testing.T) {
 	// Keys are 00..0f, 20..2f and 40..4f; the records form one session.
 	checkRecordVectors(t, 16, []recordVector{
 		{
-			command:   iso7816.Command{INS: 0xcb, P1: 0x3f, P2: 0xff, Data: recordHex(t, "5c017e"), Le: 256},
+			command:   iso7816.Command{INS: 0xcb, P1: 0x3f, P2: 0xff, Data: decodeHex(t, "5c017e"), Le: 256},
 			protected: "87110132bfc827cc8643fe7f8514f87073f3769701008e0896035c77c12408cc",
 			cmac:      "96035c77c12408cc0a0cb833dd519ae6",
 			response:  "8721017226ad8cf78d3b1790a3fb4f7566421e6854f7fdf5aa63bdb99d9b2949d2eab2990290008e08f64830abfc5cab24",
@@ -148,7 +125,7 @@ func TestCS2RecordVectors(t *testing.T) {
 			status: 0x63c3,
 		},
 		{
-			command:   iso7816.Command{INS: 0x20, P2: 0x80, Data: recordHex(t, "313233343536ffff")},
+			command:   iso7816.Command{INS: 0x20, P2: 0x80, Data: decodeHex(t, "313233343536ffff")},
 			protected: "8711015fb5c07e8a2d333a8bf38798c82dfb588e08d9bffc851718c842",
 			cmac:      "d9bffc851718c842f8e8acfcb55718be",
 			response:  "990290008e08956695fc17e11dac", rmac: "956695fc17e11dac3bdcc6e7609d04d8",
@@ -172,11 +149,11 @@ func TestRecordProtectsBeforeFragmentation(t *testing.T) {
 
 	// Independent OpenSSL vector: one complete DO87, DO97 and DO8E.
 	digest := sha256.Sum256(protected.Data)
-	if !bytes.Equal(digest[:], recordHex(t, "08b5c399ad4dd27f28a32ca9de9138122683ecfe30b193e58ef829a853c255a7")) {
+	if !bytes.Equal(digest[:], decodeHex(t, "08b5c399ad4dd27f28a32ca9de9138122683ecfe30b193e58ef829a853c255a7")) {
 		t.Errorf("protected command SHA-256 = %x", digest)
 	}
 
-	if !bytes.Equal(next[:], recordHex(t, "c8181dbfc7c5732d4722bd25109219bc")) {
+	if !bytes.Equal(next[:], decodeHex(t, "c8181dbfc7c5732d4722bd25109219bc")) {
 		t.Errorf("complete command C-MAC = %x", next)
 	}
 
@@ -228,10 +205,23 @@ func TestRecordRejectsMalformedResponses(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			data := decodeHex(t, test.data)
+
+			// Check the structure independently: these zero MACs would also
+			// reject a malformed response accepted by the parser.
+			encrypted, status, authenticated, mac, err := parseProtectedResponse(data)
+			if !errors.Is(err, ErrInvalidResponse) {
+				t.Errorf("parseProtectedResponse = %v, want invalid response", err)
+			}
+
+			if encrypted != nil || status != 0 || authenticated != nil || mac != nil {
+				t.Error("malformed response returned parsed fields")
+			}
+
 			session := newRecordSession(recordKeys(), iso7816.EncodingShort)
 			before := session
 
-			response, err := session.unprotect(iso7816.Response{Data: recordHex(t, test.data), Status: 0x9000}, [16]byte{1})
+			response, err := session.unprotect(iso7816.Response{Data: data, Status: 0x9000}, [16]byte{1})
 			if !errors.Is(err, ErrInvalidResponse) {
 				t.Fatalf("unprotect = %v, want invalid response", err)
 			}
@@ -243,11 +233,50 @@ func TestRecordRejectsMalformedResponses(t *testing.T) {
 	}
 }
 
+func TestParseProtectedResponseFields(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		data          string
+		encrypted     string
+		status        iso7816.StatusWord
+		authenticated string
+	}{
+		{
+			name: "status only", data: "990263c38e080102030405060708",
+			status: 0x63c3, authenticated: "990263c3",
+		},
+		{
+			name: "encrypted data", data: "87110100000000000000000000000000000000990290008e080102030405060708",
+			encrypted: "00000000000000000000000000000000", status: 0x9000,
+			authenticated: "8711010000000000000000000000000000000099029000",
+		},
+		{
+			name: "original BER length", data: "99810290008e080102030405060708",
+			status: 0x9000, authenticated: "9981029000",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			encrypted, status, authenticated, mac, err := parseProtectedResponse(decodeHex(t, test.data))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if (encrypted == nil) != (test.encrypted == "") || !bytes.Equal(encrypted, decodeHex(t, test.encrypted)) || status != test.status {
+				t.Errorf("encrypted/status = %x/%s, want %s/%s", encrypted, status, test.encrypted, test.status)
+			}
+
+			if !bytes.Equal(authenticated, decodeHex(t, test.authenticated)) || !bytes.Equal(mac, []byte{1, 2, 3, 4, 5, 6, 7, 8}) {
+				t.Errorf("authenticated/MAC = %x/%x", authenticated, mac)
+			}
+		})
+	}
+}
+
 func TestRecordAuthenticatesBeforeDecrypting(t *testing.T) {
 	// This ciphertext decrypts to sixteen zero bytes: invalid ISO padding.
 	// The record's R-MAC is independently calculated with OpenSSL.
 	response := iso7816.Response{
-		Data:   recordHex(t, "871101e05b19e6a8891af1fc1b4181202a150d990290008e088e052c6abdbb6044"),
+		Data:   decodeHex(t, "871101e05b19e6a8891af1fc1b4181202a150d990290008e088e052c6abdbb6044"),
 		Status: 0x9000,
 	}
 	session := newRecordSession(recordKeys(), iso7816.EncodingShort)
@@ -271,7 +300,7 @@ func TestRecordAuthenticatesBeforeDecrypting(t *testing.T) {
 }
 
 func TestRecordRejectsReplayAndTampering(t *testing.T) {
-	valid := recordHex(t, "872101ec0be757fe838d768f1362238a19a718761c2481b8a50d8924263c195fa87263990290008e08190ea8a6548b0e15")
+	valid := decodeHex(t, "872101ec0be757fe838d768f1362238a19a718761c2481b8a50d8924263c195fa87263990290008e08190ea8a6548b0e15")
 	for _, position := range []int{3, 20, 38, len(valid) - 1} {
 		session := newRecordSession(recordKeys(), iso7816.EncodingShort)
 		data := bytes.Clone(valid)
@@ -303,7 +332,7 @@ func TestRecordAuthenticatesOriginalBEREncoding(t *testing.T) {
 	// BER permits long-form lengths for small values. This MAC covers the
 	// original 99 81 02 encoding, not a canonicalized 99 02 replacement.
 	response, err := session.unprotect(iso7816.Response{
-		Data:   recordHex(t, "99810290008e0863d76094b7ebd8ef"),
+		Data:   decodeHex(t, "99810290008e0863d76094b7ebd8ef"),
 		Status: 0x9000,
 	}, [16]byte{})
 	if err != nil {
@@ -359,6 +388,58 @@ func TestRecordRejectsUnsupportedCommands(t *testing.T) {
 	}
 }
 
+func TestRecordProtectedDataLimit(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		encoding  iso7816.Encoding
+		plaintext int
+		protected int
+		wantError bool
+	}{
+		{name: "extended fits", encoding: iso7816.EncodingExtended, plaintext: 65503, protected: 65522},
+		{name: "extended overflows", encoding: iso7816.EncodingExtended, plaintext: 65504, wantError: true},
+		{name: "short fits", encoding: iso7816.EncodingShort, plaintext: 65503, protected: 65522},
+		{name: "short permits larger protected body", encoding: iso7816.EncodingShort, plaintext: 65504, protected: 65538},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			session := newRecordSession(recordKeys(), test.encoding)
+			before := session
+			command := iso7816.Command{INS: 0x87, P1: 0x11, P2: 0x9c, Data: make([]byte, test.plaintext), Le: 256}
+
+			protected, next, err := session.protect(command)
+			if session != before {
+				t.Error("protect changed session state")
+			}
+
+			if test.wantError {
+				if !errors.Is(err, iso7816.ErrInvalidCommand) {
+					t.Errorf("protect = %v, want invalid command", err)
+				}
+
+				if protected.Data != nil || next != [16]byte{} {
+					t.Error("oversized extended command returned protected data or next MAC")
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if len(protected.Data) != test.protected || protected.Encoding != test.encoding {
+				t.Errorf("protected data length/encoding = %d/%v, want %d/%v", len(protected.Data), protected.Encoding, test.protected, test.encoding)
+			}
+
+			if test.encoding == iso7816.EncodingExtended {
+				if _, err := protected.MarshalBinary(); err != nil {
+					t.Errorf("extended APDU encoding: %v", err)
+				}
+			}
+		})
+	}
+}
+
 func TestRecordCounterExhaustionClearsKeys(t *testing.T) {
 	session := newRecordSession(recordKeys(), iso7816.EncodingShort)
 	for i := 1; i < len(session.counter); i++ {
@@ -372,7 +453,7 @@ func TestRecordCounterExhaustionClearsKeys(t *testing.T) {
 
 	// No ciphertext is needed; authenticate a status-only response so the
 	// final counter value can commit without an independent CBC vector.
-	data := recordHex(t, "99029000")
+	data := decodeHex(t, "99029000")
 	mac := cmac(session.keys.rmac[:], append(make([]byte, 16), data...))
 	data = append(data, 0x8e, 8)
 	data = append(data, mac[:8]...)

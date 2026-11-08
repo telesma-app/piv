@@ -3,14 +3,8 @@ package card
 import (
 	"bytes"
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"errors"
 	"io"
-	"math/big"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -64,87 +58,6 @@ func TestExchangeReturnsFinalStatus(t *testing.T) {
 
 	if response.Status != 0x6982 || !bytes.Equal(response.Data, []byte{5, 6}) {
 		t.Errorf("response = %+v, want status 6982 and data 0506", response)
-	}
-}
-
-func TestGetDataReadsEachTime(t *testing.T) {
-	command := []byte{0, 0xcb, 0x3f, 0xff, 5, 0x5c, 3, 0x5f, 0xc1, 7, 0}
-	d, _ := newDevice(t,
-		exchangeStep{command: command, response: iso7816.Response{Status: 0x9000, Data: []byte{0x53, 1, 1}}},
-		exchangeStep{command: command, response: iso7816.Response{Status: 0x9000, Data: []byte{0x53, 1, 2}}},
-	)
-
-	for _, want := range []byte{1, 2} {
-		data, err := d.GetData(t.Context(), protocol.CardCapabilityContainer)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		if !bytes.Equal(data, []byte{want}) {
-			t.Errorf("GetData = %x, want %02x", data, want)
-		}
-	}
-}
-
-func TestReferenceStatusReadsCardState(t *testing.T) {
-	command := []byte{0, 0x20, 0, 0x80}
-	d, _ := newDevice(t,
-		exchangeStep{command: command, response: iso7816.Response{Status: 0x63c3}},
-		exchangeStep{command: command, response: iso7816.Response{Status: 0x9000}},
-	)
-
-	status, err := d.ReferenceStatus(t.Context(), protocol.ApplicationPIN)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if status.Verified || status.Retries != 3 {
-		t.Errorf("ReferenceStatus = %+v, want unverified with three retries", status)
-	}
-
-	status, err = d.ReferenceStatus(t.Context(), protocol.ApplicationPIN)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !status.Verified {
-		t.Errorf("ReferenceStatus = %+v, want verified", status)
-	}
-}
-
-func TestGetCertificateReturnsDERWithoutTrustEvaluation(t *testing.T) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	template := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "expired PIV certificate"},
-		NotBefore:    time.Unix(1, 0),
-		NotAfter:     time.Unix(2, 0),
-	}
-
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	inner := append([]byte{0x70, 0x82, byte(len(der) >> 8), byte(len(der))}, der...)
-	inner = append(inner, 0x71, 1, 0, 0xfe, 0)
-	object := append([]byte{0x53, 0x82, byte(len(inner) >> 8), byte(len(inner))}, inner...)
-	d, _ := newDevice(t, exchangeStep{
-		command:  []byte{0, 0xcb, 0x3f, 0xff, 5, 0x5c, 3, 0x5f, 0xc1, 5, 0},
-		response: iso7816.Response{Status: 0x9000, Data: object},
-	})
-
-	certificate, err := d.GetCertificate(t.Context(), protocol.PIVAuthentication)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !bytes.Equal(certificate.Raw, der) || certificate.Subject.CommonName != template.Subject.CommonName {
-		t.Errorf("certificate = %+v, want original expired certificate", certificate.Subject)
 	}
 }
 
@@ -426,13 +339,14 @@ func TestQueuedContextPreservesActiveSession(t *testing.T) {
 type slowCloseTransport struct {
 	started     chan struct{}
 	closing     chan struct{}
+	releaseIO   chan struct{}
 	finishClose chan struct{}
 	closeCalls  int
 }
 
 func (s *slowCloseTransport) Exchange(ctx context.Context, command iso7816.Command) (iso7816.Response, error) {
 	close(s.started)
-	<-s.closing
+	<-s.releaseIO
 
 	return iso7816.Response{}, io.ErrClosedPipe
 }
@@ -448,27 +362,52 @@ func (s *slowCloseTransport) Close() error {
 func TestCloseReleasesQueueWhileTransportIsClosing(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		raw := &slowCloseTransport{
-			started: make(chan struct{}), closing: make(chan struct{}), finishClose: make(chan struct{}),
+			started: make(chan struct{}), closing: make(chan struct{}),
+			releaseIO: make(chan struct{}), finishClose: make(chan struct{}),
 		}
 
+		releaseIO := sync.OnceFunc(func() { close(raw.releaseIO) })
 		finishClose := sync.OnceFunc(func() { close(raw.finishClose) })
-		defer finishClose()
-
 		d := New(raw)
+		ctx, cancel := context.WithCancel(t.Context())
+
+		var workers sync.WaitGroup
+
+		defer func() {
+			cancel()
+			releaseIO()
+			finishClose()
+
+			_ = d.Close()
+
+			done := make(chan struct{})
+
+			go func() { workers.Wait(); close(done) }()
+
+			receive(t, done, "workers did not stop after cleanup")
+		}()
+
 		active := make(chan error, 1)
 
-		go func() { _, err := d.Exchange(t.Context(), iso7816.Command{INS: 0xfd}); active <- err }()
+		workers.Go(func() { _, err := d.Exchange(ctx, iso7816.Command{INS: 0xfd}); active <- err })
 
 		receive(t, raw.started, "active operation did not start")
 
 		queued := make(chan error, 1)
 
-		go func() { _, err := d.GetData(t.Context(), protocol.CardCapabilityContainer); queued <- err }()
+		workers.Go(func() { _, err := d.GetData(ctx, protocol.CardCapabilityContainer); queued <- err })
 
 		synctest.Wait()
 
+		select {
+		case err := <-queued:
+			t.Fatalf("queued operation completed before Close: %v", err)
+		default:
+		}
+
 		closed := make(chan error, 1)
-		go func() { closed <- d.Close() }()
+
+		workers.Go(func() { closed <- d.Close() })
 
 		receive(t, raw.closing, "Close waited for the workflow gate")
 
@@ -477,19 +416,27 @@ func TestCloseReleasesQueueWhileTransportIsClosing(t *testing.T) {
 		}
 
 		select {
+		case err := <-active:
+			t.Fatalf("active operation completed before I/O release: %v", err)
+		default:
+		}
+
+		select {
 		case err := <-closed:
 			t.Fatalf("Close returned before transport finished: %v", err)
 		default:
+		}
+
+		releaseIO()
+
+		if err := receive(t, active, "active operation did not stop after I/O release"); !errors.Is(err, io.ErrClosedPipe) {
+			t.Fatalf("active operation = %v, want I/O failure", err)
 		}
 
 		finishClose()
 
 		if err := receive(t, closed, "Close did not finish"); err != nil {
 			t.Fatal(err)
-		}
-
-		if err := receive(t, active, "active operation did not stop after Close"); !errors.Is(err, io.ErrClosedPipe) {
-			t.Fatalf("active operation = %v, want I/O failure", err)
 		}
 
 		if raw.closeCalls != 1 {

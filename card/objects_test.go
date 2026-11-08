@@ -307,19 +307,37 @@ func TestTypedObjectReadsRespectSession(t *testing.T) {
 					if err := d.lock(t.Context()); err != nil {
 						t.Fatal(err)
 					}
-					defer d.unlock()
 
 					ctx, cancel := context.WithCancel(t.Context())
 					defer cancel()
 
 					result := make(chan error, 1)
+					done := make(chan struct{})
 
-					go func() { _, err := object.read(ctx, d); result <- err }()
+					go func() {
+						defer close(done)
+
+						_, err := object.read(ctx, d)
+						result <- err
+					}()
+
+					defer func() {
+						cancel()
+						d.unlock()
+						receive(t, done, "object read worker did not stop after cancellation and gate release")
+					}()
 
 					synctest.Wait()
+
+					select {
+					case err := <-result:
+						t.Fatalf("object read completed while the workflow gate was held: %v", err)
+					default:
+					}
+
 					cancel()
 
-					if err := <-result; !errors.Is(err, context.Canceled) || raw.calls != 0 || raw.closeCalls != 0 {
+					if err := receive(t, result, "queued object read ignored cancellation"); !errors.Is(err, context.Canceled) || raw.calls != 0 || raw.closeCalls != 0 {
 						t.Errorf("canceled read = %v, calls=%d, closes=%d", err, raw.calls, raw.closeCalls)
 					}
 				})

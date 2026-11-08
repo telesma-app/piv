@@ -3,6 +3,7 @@ package card
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -17,6 +18,47 @@ import (
 	"github.com/telesma-app/piv/protocol"
 	"github.com/telesma-app/piv/transport"
 )
+
+func newRSADecryptionPeer(t testing.TB) (*PrivateKey, *signaturePeer) {
+	t.Helper()
+	private := signingRSA(t)
+	raw := &signaturePeer{
+		t: t, reference: protocol.KeyManagement, algorithm: protocol.RSA2048,
+		rsa: private, closed: make(chan struct{}),
+		authenticationReference: protocol.ApplicationPIN,
+		authenticationData:      []byte{'1', '2', '3', '4', '5', '6', 0xff, 0xff},
+	}
+	device := New(raw)
+
+	t.Cleanup(func() { _ = device.Close() })
+
+	key, err := device.PrivateKey(protocol.KeyManagement, &private.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return key, raw
+}
+
+func rsaCiphertext(t testing.TB, publicKey *rsa.PublicKey, message []byte, opts crypto.DecrypterOpts) []byte {
+	t.Helper()
+
+	var ciphertext []byte
+
+	var err error
+
+	if oaep, ok := opts.(*rsa.OAEPOptions); ok {
+		ciphertext, err = rsa.EncryptOAEP(oaep.Hash.New(), rand.Reader, publicKey, message, oaep.Label)
+	} else {
+		ciphertext, err = rsa.EncryptPKCS1v15(rand.Reader, publicKey, message) //nolint:staticcheck // Legacy PIV compatibility requires PKCS#1 v1.5 support.
+	}
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return ciphertext
+}
 
 // This fixed PKCS#8 fixture comes from Go's crypto/rsa rsa_test.go test2048Key.
 // Parse it afresh so each test owns its mutable key state.

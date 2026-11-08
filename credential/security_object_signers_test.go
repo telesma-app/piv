@@ -11,25 +11,8 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/telesma-app/bertlv"
 	"github.com/telesma-app/piv/protocol"
 )
-
-func encodeCMSFixture(t testing.TB, signed signedData) []byte {
-	t.Helper()
-
-	body, err := asn1.Marshal(signed)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	der, err := asn1.Marshal(contentInfo{Type: oidSignedData, Content: asn1.RawValue{Class: asn1.ClassContextSpecific, Tag: 0, IsCompound: true, Bytes: body}})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	return der
-}
 
 func cmsFixtureSigner(t testing.TB, wire []byte) signerInfo {
 	t.Helper()
@@ -156,98 +139,5 @@ func TestSecurityObjectSelectedSigners(t *testing.T) {
 	object.SignedData = encodeCMSFixture(t, combined)
 	if _, err := VerifySecurityObject(object, fixture.cert, fixture.options); !errors.Is(err, ErrAuthentication) {
 		t.Errorf("selected signer digest differing from LDS accepted: %v", err)
-	}
-}
-
-func TestCMSDigestSetMembership(t *testing.T) {
-	fixture := newSigningFixture(t, nil)
-
-	base, err := parseCMS(fixtureCMS(t, fixture, []byte("content"), oidLDS, false, true, nil, nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	for _, digests := range [][]pkix.AlgorithmIdentifier{
-		nil,
-		{{Algorithm: oidSHA384}},
-		{{Algorithm: asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 3}}},
-	} {
-		signed := base
-
-		signed.Digests = digests
-		if _, err := parseCMS(encodeCMSFixture(t, signed)); !errors.Is(err, ErrAuthentication) {
-			t.Errorf("invalid digest set accepted: %v", err)
-		}
-	}
-
-	base.Signers = nil
-	if _, err := parseCMS(encodeCMSFixture(t, base)); !errors.Is(err, ErrAuthentication) {
-		t.Errorf("empty signer set accepted: %v", err)
-	}
-}
-
-func TestCHUIDAndBiometricRequireSingleSignerAndDigest(t *testing.T) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	fixture := newSigningFixture(t, key)
-	chuid := fixtureCHUID(t, fixture)
-	biometric := fixtureBiometric(t, fixture, chuid, false, nil)
-
-	for _, duplicateSigner := range []bool{false, true} {
-		modify := func(wire []byte) []byte {
-			signed, err := parseCMS(wire)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			if duplicateSigner {
-				signed.Signers = append(signed.Signers, signed.Signers[0])
-			} else {
-				signed.Digests = append(signed.Digests, pkix.AlgorithmIdentifier{Algorithm: oidSHA384, Parameters: asn1.NullRawValue})
-			}
-
-			return encodeCMSFixture(t, signed)
-		}
-
-		var content []byte
-
-		for data := chuid.Raw; len(data) != 0; {
-			tag, _, rest, err := bertlv.Parse(data)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			if tag == 0x3e {
-				content = bertlv.Append(content, tag, modify(chuid.IssuerSignature))
-			} else {
-				content = append(content, data[:len(data)-len(rest)]...)
-			}
-
-			data = rest
-		}
-
-		invalidCHUID, err := protocol.ParseCHUID(content)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		if _, err := VerifyCHUID(invalidCHUID, fixture.options); !errors.Is(err, ErrAuthentication) {
-			t.Errorf("CHUID multi signer/digest accepted: %v", err)
-		}
-
-		invalidBiometric := biometric
-		invalidBiometric.Signature = modify(biometric.Signature)
-
-		invalidBiometric, err = protocol.ParseBiometricData(protocol.EncodeBiometricData(invalidBiometric))
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		if _, err := VerifyBiometric(invalidBiometric, chuid, fixture.options); !errors.Is(err, ErrAuthentication) {
-			t.Errorf("biometric multi signer/digest accepted: %v", err)
-		}
 	}
 }

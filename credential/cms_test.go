@@ -1,7 +1,10 @@
 package credential
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509/pkix"
 	"encoding/asn1"
 	"errors"
 	"slices"
@@ -36,5 +39,55 @@ func TestVerifyCMSRejectsSignedAttributeMisuse(t *testing.T) {
 				t.Errorf("verifyCMS = %v", err)
 			}
 		})
+	}
+}
+
+func TestCMSDigestSetMembership(t *testing.T) {
+	fixture := newSigningFixture(t, nil)
+
+	base, err := parseCMS(fixtureCMS(t, fixture, []byte("content"), oidLDS, false, true, nil, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, digests := range [][]pkix.AlgorithmIdentifier{
+		nil,
+		{{Algorithm: oidSHA384}},
+		{{Algorithm: asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 3}}},
+	} {
+		signed := base
+
+		signed.Digests = digests
+		if _, err := parseCMS(encodeCMSFixture(t, signed)); !errors.Is(err, ErrAuthentication) {
+			t.Errorf("invalid digest set accepted: %v", err)
+		}
+	}
+
+	base.Signers = nil
+	if _, err := parseCMS(encodeCMSFixture(t, base)); !errors.Is(err, ErrAuthentication) {
+		t.Errorf("empty signer set accepted: %v", err)
+	}
+}
+
+func TestRSAAndPSSCMS(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fixture := newSigningFixture(t, key)
+
+	content := []byte("signed PIV content")
+	for _, salt := range []*int{nil, new(20), new(32)} {
+		wire := fixtureCMS(t, fixture, content, oidCHUID, true, false, nil, salt)
+
+		signed, err := parseCMS(wire)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := verifyCMS(signed, fixture.cert, content, oidCHUID, true); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

@@ -91,6 +91,22 @@ type fixtureAttribute struct {
 	Values asn1.RawValue
 }
 
+func encodeCMSFixture(t testing.TB, signed signedData) []byte {
+	t.Helper()
+
+	body, err := asn1.Marshal(signed)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	der, err := asn1.Marshal(contentInfo{Type: oidSignedData, Content: asn1.RawValue{Class: asn1.ClassContextSpecific, Tag: 0, IsCompound: true, Bytes: body}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return der
+}
+
 func fixtureAttr(t testing.TB, oid asn1.ObjectIdentifier, value any) fixtureAttribute {
 	t.Helper()
 
@@ -244,9 +260,15 @@ func fixtureCMS(t testing.TB, fixture signingFixture, content []byte, typ asn1.O
 func fixtureCHUID(t testing.TB, fixture signingFixture) protocol.CHUID {
 	t.Helper()
 
+	return fixtureCHUIDWithExpiration(t, fixture, "20311231")
+}
+
+func fixtureCHUIDWithExpiration(t testing.TB, fixture signingFixture, expiration string) protocol.CHUID {
+	t.Helper()
+
 	content := bertlv.Append(nil, 0x30, bytes.Repeat([]byte{0x42}, 25))
 	content = bertlv.Append(content, 0x34, bytes.Repeat([]byte{0x17}, 16))
-	content = bertlv.Append(content, 0x35, []byte("20311231"))
+	content = bertlv.Append(content, 0x35, []byte(expiration))
 	// Include unknown fields and nonminimal BER length encoding in the signed
 	// bytes. Re-encoding the parsed CHUID would invalidate the signature.
 	content = append(content, 0x37, 0x81, 1, 0xab)
@@ -261,4 +283,30 @@ func fixtureCHUID(t testing.TB, fixture signingFixture) protocol.CHUID {
 	}
 
 	return chuid
+}
+
+func securityObjectKeyID(t testing.TB, cms []byte, subjectKeyID []byte) []byte {
+	t.Helper()
+
+	signed, err := parseCMS(cms)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// SID is not part of the signed attributes. Change the identifier while
+	// retaining the independently generated signature and exact attributes.
+	signed.Signers[0].Raw = nil
+	signed.Signers[0].Version = 3
+	signed.Signers[0].SID = asn1.RawValue{Class: asn1.ClassContextSpecific, Tag: 0, Bytes: subjectKeyID}
+
+	body, err := asn1.Marshal(signed)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	der, err := asn1.Marshal(contentInfo{Type: oidSignedData, Content: asn1.RawValue{Class: asn1.ClassContextSpecific, Tag: 0, IsCompound: true, Bytes: body}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return der
 }

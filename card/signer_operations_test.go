@@ -550,6 +550,59 @@ func TestSigningPreservesCompletedResultAfterCancellation(t *testing.T) {
 	}
 }
 
+func TestSigningInvalidationClosesSession(t *testing.T) {
+	for _, phase := range []string{"VERIFY", "GENERAL AUTHENTICATE"} {
+		t.Run(phase, func(t *testing.T) {
+			private := signingECDSA(t, elliptic.P256())
+			digest := sha256.Sum256([]byte("invalidated signing session"))
+			cause := errors.New("card removed")
+			closeErr := errors.New("disconnect failed")
+			invalidated := &transport.DeviceInvalidatedError{Err: cause}
+
+			steps := []exchangeStep{{
+				command: []byte{0, 0x20, 0, 0x80, 8, '1', '2', '3', '4', '5', '6', 0xff, 0xff}, err: invalidated,
+			}}
+			if phase == "GENERAL AUTHENTICATE" {
+				steps[0].err = nil
+				steps[0].response = iso7816.Response{Status: 0x9000}
+
+				command := append([]byte{0, 0x87, 0x11, 0x9c, 38, 0x7c, 36, 0x82, 0, 0x81, 32}, digest[:]...)
+				steps = append(steps, exchangeStep{command: append(command, 0), err: invalidated})
+			}
+
+			device, raw := newDevice(t, steps...)
+			raw.closeErr = closeErr
+
+			key, err := device.PrivateKey(protocol.DigitalSignature, &private.PublicKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			authentication := PINAuthentication(protocol.ApplicationPIN, signingPIN)
+
+			signature, err := key.Sign(t.Context(), rand.Reader, digest[:], crypto.SHA256, authentication)
+
+			var got *transport.DeviceInvalidatedError
+			if signature != nil || !errors.As(err, &got) || got != invalidated || !errors.Is(err, cause) || !errors.Is(err, closeErr) {
+				t.Errorf("Sign = %x, %v; want no signature, original invalidation and close error", signature, err)
+			}
+
+			if raw.calls != len(steps) || raw.closeCalls != 1 {
+				t.Errorf("after invalidation: exchanges=%d closes=%d, want %d and 1", raw.calls, raw.closeCalls, len(steps))
+			}
+
+			signature, err = key.Sign(t.Context(), rand.Reader, digest[:], crypto.SHA256, authentication)
+			if signature != nil || !errors.Is(err, io.ErrClosedPipe) {
+				t.Errorf("Sign after invalidation = %x, %v; want closed pipe", signature, err)
+			}
+
+			if err := device.Close(); !errors.Is(err, closeErr) || raw.calls != len(steps) || raw.closeCalls != 1 {
+				t.Errorf("Close after invalidation = %v; exchanges=%d closes=%d, want %d and 1", err, raw.calls, raw.closeCalls, len(steps))
+			}
+		})
+	}
+}
+
 func TestCloseInterruptsSigningIO(t *testing.T) {
 	digest := sha256.Sum256([]byte("close signing I/O"))
 

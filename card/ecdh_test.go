@@ -530,6 +530,51 @@ func (b *blockingECDHTransport) Close() error {
 	return nil
 }
 
+func TestECDHInvalidationClosesSession(t *testing.T) {
+	for _, phase := range []string{"VERIFY", "GENERAL AUTHENTICATE"} {
+		t.Run(phase, func(t *testing.T) {
+			public, peer, _ := ecdhMaterial(t, ecdh.P256())
+			cause := errors.New("card removed")
+			closeErr := errors.New("disconnect failed")
+			invalidated := &transport.DeviceInvalidatedError{Err: cause}
+
+			steps := []exchangeStep{{
+				command: []byte{0, 0x20, 0, 0x80, 8, '1', '2', '3', '4', '5', '6', 0xff, 0xff}, err: invalidated,
+			}}
+			if phase == "GENERAL AUTHENTICATE" {
+				steps[0].err = nil
+				steps[0].response = iso7816.Response{Status: 0x9000}
+				steps = append(steps, exchangeStep{command: ecdhCommand(protocol.ECCP256, protocol.KeyManagement, peer), err: invalidated})
+			}
+
+			device, raw := newDevice(t, steps...)
+			raw.closeErr = closeErr
+			key := bindECDH(t, device, protocol.KeyManagement, public)
+			authentication := PINAuthentication(protocol.ApplicationPIN, signingPIN)
+
+			secret, err := key.ECDH(t.Context(), peer, authentication)
+
+			var got *transport.DeviceInvalidatedError
+			if secret != nil || !errors.As(err, &got) || got != invalidated || !errors.Is(err, cause) || !errors.Is(err, closeErr) {
+				t.Errorf("ECDH = %x, %v; want no secret, original invalidation and close error", secret, err)
+			}
+
+			if raw.calls != len(steps) || raw.closeCalls != 1 {
+				t.Errorf("after invalidation: exchanges=%d closes=%d, want %d and 1", raw.calls, raw.closeCalls, len(steps))
+			}
+
+			secret, err = key.ECDH(t.Context(), peer, authentication)
+			if secret != nil || !errors.Is(err, io.ErrClosedPipe) {
+				t.Errorf("ECDH after invalidation = %x, %v; want closed pipe", secret, err)
+			}
+
+			if err := device.Close(); !errors.Is(err, closeErr) || raw.calls != len(steps) || raw.closeCalls != 1 {
+				t.Errorf("Close after invalidation = %v; exchanges=%d closes=%d, want %d and 1", err, raw.calls, raw.closeCalls, len(steps))
+			}
+		})
+	}
+}
+
 func TestCloseInterruptsECDHIO(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		public, peer, _ := ecdhMaterial(t, ecdh.P256())
