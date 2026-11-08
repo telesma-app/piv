@@ -104,7 +104,7 @@ administration commands.
 Add the corresponding vendor module to your application and pass the existing
 `*card.Device` to its functions. Supported commands depend on the device and firmware.
 
-## Inspection example
+## Examples
 
 [`examples/inspect`](examples/inspect) lists inserted PIV cards, queries PIN
 status and reads certificate metadata without submitting a PIN or writing data:
@@ -113,6 +113,17 @@ status and reads certificate metadata without submitting a PIN or writing data:
 go run ./examples/inspect
 go run ./examples/inspect -reader 'exact PC/SC reader name'
 ```
+
+Additional runnable examples cover the main private-key and secure-channel workflows:
+
+| Example | Workflow |
+| --- | --- |
+| [`csr`](examples/csr) | Create a PEM certificate request with an existing slot key through `crypto.Signer` |
+| [`rsa-oaep`](examples/rsa-oaep) | Encrypt locally and decrypt on the card through `crypto.Decrypter` |
+| [`ecdh`](examples/ecdh) | Agree a secret with a local ephemeral peer and derive a key with HKDF |
+| [`secure-messaging`](examples/secure-messaging) | Validate card trust, establish NIST CS7 and read a protected object |
+
+See [`examples/README.md`](examples/README.md) for prerequisites and commands.
 
 ## Development
 
