@@ -9,7 +9,7 @@ on:
     branches: [ master ]
 
 env:
-  GOWORK: 'off'
+  GOWORK: "off"
 
 permissions:
   contents: read
@@ -45,8 +45,6 @@ jobs:
       run: go test -v ./...
 
   lint:
-    env:
-      GOWORK: "off"
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
