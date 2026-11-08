@@ -1,0 +1,2 @@
+# Preserve the exact bytes covered by the interoperability signatures.
+credential/testdata/pss-message.txt -text
