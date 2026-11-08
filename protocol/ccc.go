@@ -3,7 +3,7 @@ package protocol
 import (
 	"fmt"
 
-	"github.com/telesma-app/piv/internal/bertlv"
+	"github.com/telesma-app/bertlv"
 )
 
 // CCC contains the Card Capability Container (SP 800-73-5 Part 1, Sec. 3.1.1 and

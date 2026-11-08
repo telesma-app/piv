@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/telesma-app/piv/internal/bertlv"
+	"github.com/telesma-app/bertlv"
 )
 
 // CHUID contains the Card Holder Unique Identifier data object (SP 800-73-5

@@ -24,7 +24,7 @@ Available operations depend on the card and its access policy.
 ## Installation
 
 ```sh
-go get github.com/telesma-app/piv@v0.1.0
+go get github.com/telesma-app/piv@v0.2.0
 ```
 
 See [`go.mod`](go.mod) for the required Go version.

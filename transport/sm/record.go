@@ -4,8 +4,8 @@ import (
 	"crypto/subtle"
 	"fmt"
 
+	"github.com/telesma-app/bertlv"
 	"github.com/telesma-app/iso7816"
-	"github.com/telesma-app/piv/internal/bertlv"
 )
 
 // recordSession protects complete logical APDUs. Its owner serializes access;

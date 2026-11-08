@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/telesma-app/bertlv"
 	"github.com/telesma-app/iso7816"
-	"github.com/telesma-app/piv/internal/bertlv"
 	"github.com/telesma-app/piv/protocol"
 	"github.com/telesma-app/piv/transport"
 )

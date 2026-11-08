@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/telesma-app/piv/internal/bertlv"
+	"github.com/telesma-app/bertlv"
 )
 
 func TestParseApplicationPropertyTemplate(t *testing.T) {

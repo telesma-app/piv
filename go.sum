@@ -1,7 +1,9 @@
 github.com/ebitengine/purego v0.11.3 h1:OB+JLpdm7ioymhyA+6s5kbb/uOuYycAgL8NNTFc5MLg=
 github.com/ebitengine/purego v0.11.3/go.mod h1:DCHPP08djqhNSoTfImcnHYQRZmd0qhakvrozqaEYhGQ=
-github.com/telesma-app/iso7816 v0.4.0 h1:TvUNNvu7PdVCatOa2VvCrLz4AEmjWzpEVLQi52kEWRs=
-github.com/telesma-app/iso7816 v0.4.0/go.mod h1:oI7P4NERU4/SeBbou5UYg9vHiBvSC7QWF9PbLxcjxb4=
+github.com/telesma-app/bertlv v0.1.0 h1:OpTHpiowNknnwuh+cQdfUtRG9kTfoghPFk0Z3uf4ae0=
+github.com/telesma-app/bertlv v0.1.0/go.mod h1:Fv/5MgI7gz5R02dIIaFJ6AQXeePX0GcPZGrzoGfhbgY=
+github.com/telesma-app/iso7816 v0.6.0 h1:1mM38desJZMcknlyxkez0rkrPR65GxiW9hbbapPppio=
+github.com/telesma-app/iso7816 v0.6.0/go.mod h1:lW9zcIB14UfhOu5ZZeOncyPYcvD5V2CatwODlWMwiZg=
 github.com/telesma-app/pcsc v0.10.0 h1:8wK+nEuVgRaEp+3pLGEmptj612pzV9TTKGZd3+R8V9s=
 github.com/telesma-app/pcsc v0.10.0/go.mod h1:cdjqtNEzkIv+q/zkAm5OUHUSAhyi9C1xRjn+U1a9JbM=
 golang.org/x/sys v0.49.0 h1:XbzkgYJHdqh/8m2Uu0W/dQv8nktxx4BFHp1M0gROTXA=

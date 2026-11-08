@@ -3,7 +3,7 @@ package protocol
 import (
 	"fmt"
 
-	"github.com/telesma-app/piv/internal/bertlv"
+	"github.com/telesma-app/bertlv"
 )
 
 // ApplicationPropertyTemplate describes the application selected by SELECT

@@ -3,7 +3,7 @@ package protocol
 import (
 	"fmt"
 
-	"github.com/telesma-app/piv/internal/bertlv"
+	"github.com/telesma-app/bertlv"
 )
 
 // PINUsagePolicyFlags is the first byte of the Discovery Object's PIN Usage

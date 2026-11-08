@@ -3,7 +3,8 @@ module github.com/telesma-app/piv
 go 1.27.3
 
 require (
-	github.com/telesma-app/iso7816 v0.4.0
+	github.com/telesma-app/bertlv v0.1.0
+	github.com/telesma-app/iso7816 v0.6.0
 	github.com/telesma-app/pcsc v0.10.0
 )
 

@@ -8,7 +8,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/telesma-app/piv/internal/bertlv"
+	"github.com/telesma-app/bertlv"
 )
 
 func TestParseRSAPublicKey(t *testing.T) {

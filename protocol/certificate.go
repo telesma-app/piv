@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/telesma-app/piv/internal/bertlv"
+	"github.com/telesma-app/bertlv"
 )
 
 // The APDU response limit bounds compressed input, but not its expansion.

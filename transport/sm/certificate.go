@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/telesma-app/piv/internal/bertlv"
+	"github.com/telesma-app/bertlv"
 )
 
 var (

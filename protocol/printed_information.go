@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/telesma-app/piv/internal/bertlv"
+	"github.com/telesma-app/bertlv"
 )
 
 // PrintedInfo contains the optional Printed Information object's cardholder

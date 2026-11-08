@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/telesma-app/piv/internal/bertlv"
+	"github.com/telesma-app/bertlv"
 	"github.com/telesma-app/piv/protocol"
 )
 

@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/telesma-app/piv/internal/bertlv"
+	"github.com/telesma-app/bertlv"
 )
 
 // ParsePublicKey parses a GENERATE ASYMMETRIC KEY PAIR response (tag 0x7f49).

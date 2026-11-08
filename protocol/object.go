@@ -3,7 +3,7 @@ package protocol
 import (
 	"fmt"
 
-	"github.com/telesma-app/piv/internal/bertlv"
+	"github.com/telesma-app/bertlv"
 )
 
 // ParseObject reads an exact single object with the expected tag.
