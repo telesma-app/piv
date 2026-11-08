@@ -67,14 +67,9 @@ func run(ctx context.Context, reader, caFile, intermediateFile string) (err erro
 		err = errors.Join(err, closeSession())
 	}()
 
-	data, err := client.NewClient(connection).GetData(ctx, protocol.SecureMessagingCertificateSignerObject)
+	signerData, err := client.NewClient(connection).GetSecureMessagingCertificateSigner(ctx)
 	if err != nil {
 		return fmt.Errorf("read content signer: %w", err)
-	}
-
-	signerData, err := protocol.ParseSecureMessagingCertificateSigner(data)
-	if err != nil {
-		return err
 	}
 
 	signer, err := x509.ParseCertificate(signerData.CertificateDER)
@@ -102,7 +97,7 @@ func run(ctx context.Context, reader, caFile, intermediateFile string) (err erro
 	device := card.New(channel)
 	closeSession = device.Close
 
-	data, err = device.GetData(ctx, protocol.CardCapabilityContainer)
+	data, err := device.GetData(ctx, protocol.CardCapabilityContainer)
 	if err != nil {
 		return err
 	}

@@ -21,6 +21,9 @@ workflows over [ISO 7816](https://github.com/telesma-app/iso7816) and
 
 Available operations depend on the card and its access policy.
 
+See the [Go API reference](https://pkg.go.dev/github.com/telesma-app/piv)
+for command and type details.
+
 ## Installation
 
 ```sh
@@ -88,6 +91,7 @@ Reading a certificate does not establish trust.
 | [`transport/iso7816`](transport/iso7816) | APDU exchanges, chaining and response collection |
 | [`transport/sm`](transport/sm) | NIST PIV CS2/CS7 secure messaging |
 | [`protocol`](protocol) | PIV constants, data models and encodings |
+| [`credential`](credential) | Signed object verification and data-group integrity |
 
 Secure channels are established before `card.New` and require independently
 trusted keys or CA certificates. SCP11b is provided by
@@ -122,6 +126,7 @@ Additional runnable examples cover the main private-key and secure-channel workf
 | [`rsa-oaep`](examples/rsa-oaep) | Encrypt locally and decrypt on the card through `crypto.Decrypter` |
 | [`ecdh`](examples/ecdh) | Agree a secret with a local ephemeral peer and derive a key with HKDF |
 | [`secure-messaging`](examples/secure-messaging) | Validate card trust, establish NIST CS7 and read a protected object |
+| [`verify-objects`](examples/verify-objects) | Verify CHUID, the Security Object and all mapped data-group digests |
 
 See [`examples/README.md`](examples/README.md) for prerequisites and commands.
 
@@ -143,4 +148,5 @@ The normal test suite does not require hardware.
 
 - [NIST SP 800-73-5 Part 1: PIV data model](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73pt1-5.pdf)
 - [NIST SP 800-73-5 Part 2: PIV command interface](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73pt2-5.pdf)
+- [NIST SP 800-76-2: PIV biometric formats](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-76-2.pdf)
 - [PIV Secure Messaging (CS2/CS7): NIST SP 800-73-5 Part 2, Section 4](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73pt2-5.pdf#page=33)

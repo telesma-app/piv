@@ -87,6 +87,20 @@ encoding, and reads the Card Capability Container over the protected connection.
 It does not submit a PIN. The CA file must come from a trusted source independent
 of the card. A failed handshake returns an error without a plaintext fallback.
 
+## Signed object verification
+
+`verify-objects` verifies a personalized card's CHUID, Security Object and mapped
+data-group digests using independently trusted content-signing CA certificates:
+
+```sh
+go run ./examples/verify-objects -reader 'exact PC/SC reader name' \
+  -ca trusted-roots.pem -intermediates intermediates.pem
+```
+
+Set `PIV_PIN` if mapped objects require PIN activation. See the
+[`credential` API](https://pkg.go.dev/github.com/telesma-app/piv/credential)
+for verification requirements and limits.
+
 ## PIN and certificate handling
 
 The three private-key examples submit the application PIN once through

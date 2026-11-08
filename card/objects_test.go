@@ -6,6 +6,7 @@ import (
 	"io"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/telesma-app/bertlv"
 	"github.com/telesma-app/iso7816"
@@ -15,7 +16,8 @@ import (
 
 type objectReadCase struct {
 	name     string
-	selector byte
+	selector []byte
+	template uint32
 	contents func(byte) []byte
 	read     func(context.Context, *Device) (byte, error)
 }
@@ -23,7 +25,7 @@ type objectReadCase struct {
 func objectReadCases() []objectReadCase {
 	return []objectReadCase{
 		{
-			name: "CHUID", selector: 0x02,
+			name: "CHUID", selector: []byte{0x5f, 0xc1, 0x02}, template: 0x53,
 			contents: func(marker byte) []byte {
 				data := append([]byte{0x30, 25}, make([]byte, 25)...)
 				data = append(data, 0x34, 16, marker)
@@ -37,7 +39,7 @@ func objectReadCases() []objectReadCase {
 			},
 		},
 		{
-			name: "CCC", selector: 0x07,
+			name: "CCC", selector: []byte{0x5f, 0xc1, 0x07}, template: 0x53,
 			contents: func(marker byte) []byte { return []byte{0xf5, 1, marker, 0xfe, 0} },
 			read: func(ctx context.Context, c *Device) (byte, error) {
 				ccc, err := c.GetCCC(ctx)
@@ -45,7 +47,7 @@ func objectReadCases() []objectReadCase {
 			},
 		},
 		{
-			name: "printed information", selector: 0x09,
+			name: "printed information", selector: []byte{0x5f, 0xc1, 0x09}, template: 0x53,
 			contents: func(marker byte) []byte {
 				return append([]byte{1, 1, marker}, []byte("\x02\x00\x04\x092030DEC31\x05\x00\x06\x0f123456789012345\xfe\x00")...)
 			},
@@ -58,23 +60,149 @@ func objectReadCases() []objectReadCase {
 				return info.Name[0], nil
 			},
 		},
+		{
+			name: "security object", selector: []byte{0x5f, 0xc1, 0x06}, template: 0x53,
+			contents: func(marker byte) []byte {
+				return protocol.EncodeSecurityObject(protocol.SecurityObjectData{
+					Mapping:    []protocol.DataGroupMapping{{DataGroup: 1, ContainerID: 0x3000}},
+					SignedData: []byte{marker},
+				})
+			},
+			read: func(ctx context.Context, c *Device) (byte, error) {
+				object, err := c.GetSecurityObject(ctx)
+				if err != nil {
+					return 0, err
+				}
+
+				return object.SignedData[0], nil
+			},
+		},
+		{
+			name: "pairing code", selector: []byte{0x5f, 0xc1, 0x23}, template: 0x53,
+			contents: func(marker byte) []byte {
+				return []byte{0x99, 8, marker, '0', '0', '0', '0', '0', '0', '0', 0xfe, 0}
+			},
+			read: func(ctx context.Context, c *Device) (byte, error) {
+				code, err := c.GetPairingCode(ctx)
+				if err != nil {
+					return 0, err
+				}
+
+				return code[0], nil
+			},
+		},
+		{
+			name: "secure messaging certificate signer", selector: []byte{0x5f, 0xc1, 0x22}, template: 0x53,
+			contents: func(marker byte) []byte {
+				return protocol.EncodeSecureMessagingCertificateSigner(protocol.SecureMessagingCertificateSigner{
+					CertificateDER: []byte{marker}, IntermediateCVC: []byte{0x7f, 0x21, 1, marker},
+				})
+			},
+			read: func(ctx context.Context, c *Device) (byte, error) {
+				signer, err := c.GetSecureMessagingCertificateSigner(ctx)
+				if err != nil {
+					return 0, err
+				}
+
+				if signer.IntermediateCVC[3] != signer.CertificateDER[0] {
+					return 0, errors.New("intermediate CVC was not retained")
+				}
+
+				return signer.CertificateDER[0], nil
+			},
+		},
+		{
+			name: "fingerprints", selector: []byte{0x5f, 0xc1, 0x03}, template: 0x53,
+			contents: func(marker byte) []byte { return objectBiometricData(protocol.BiometricFingerprint, marker) },
+			read: func(ctx context.Context, c *Device) (byte, error) {
+				biometric, err := c.GetFingerprints(ctx)
+				if err != nil {
+					return 0, err
+				}
+
+				return biometric.Record[0], nil
+			},
+		},
+		{
+			name: "facial image", selector: []byte{0x5f, 0xc1, 0x08}, template: 0x53,
+			contents: func(marker byte) []byte { return objectBiometricData(protocol.BiometricFace, marker) },
+			read: func(ctx context.Context, c *Device) (byte, error) {
+				biometric, err := c.GetFacialImage(ctx)
+				if err != nil {
+					return 0, err
+				}
+
+				return biometric.Record[0], nil
+			},
+		},
+		{
+			name: "iris images", selector: []byte{0x5f, 0xc1, 0x21}, template: 0x53,
+			contents: func(marker byte) []byte { return objectBiometricData(protocol.BiometricIris, marker) },
+			read: func(ctx context.Context, c *Device) (byte, error) {
+				biometric, err := c.GetIrisImages(ctx)
+				if err != nil {
+					return 0, err
+				}
+
+				return biometric.Record[0], nil
+			},
+		},
+		{
+			name: "biometric information", selector: []byte{0x7f, 0x61}, template: 0x7f61,
+			contents: func(marker byte) []byte {
+				return protocol.EncodeBiometricInformation(protocol.BiometricInformation{
+					Templates: []protocol.BiometricInformationTemplate{{
+						Reference: protocol.PrimaryFingerOCC, Finger: protocol.BiometricRightIndex,
+						FormatOwner: 0x0101, FormatType: 0x0005,
+						MinutiaeMinimum: 1, MinutiaeMaximum: marker,
+					}},
+				})
+			},
+			read: func(ctx context.Context, c *Device) (byte, error) {
+				information, err := c.GetBiometricInformation(ctx)
+				if err != nil {
+					return 0, err
+				}
+
+				return information.Templates[0].MinutiaeMaximum, nil
+			},
+		},
 	}
+}
+
+func (object objectReadCase) command() []byte {
+	command := []byte{0, 0xcb, 0x3f, 0xff, byte(len(object.selector) + 2), 0x5c, byte(len(object.selector))}
+	command = append(command, object.selector...)
+
+	return append(command, 0)
+}
+
+func objectBiometricData(kind protocol.BiometricType, marker byte) []byte {
+	date := time.Date(2030, time.January, 1, 0, 0, 0, 0, time.UTC)
+
+	return protocol.EncodeBiometricData(protocol.BiometricData{
+		Header: protocol.BiometricHeader{
+			SecurityOptions: 0x0d, CreationDate: date, ValidFrom: date, ValidUntil: date,
+			BiometricType: kind,
+		},
+		Record: []byte{marker}, Signature: []byte{0x30, 0},
+	})
 }
 
 func TestTypedObjectReads(t *testing.T) {
 	for _, test := range objectReadCases() {
 		t.Run(test.name, func(t *testing.T) {
-			command := []byte{0, 0xcb, 0x3f, 0xff, 5, 0x5c, 3, 0x5f, 0xc1, test.selector, 0}
+			command := test.command()
 			d, _ := newDevice(t,
 				exchangeStep{command: command, response: iso7816.Response{
-					Status: 0x9000, Data: bertlv.Append(nil, 0x53, test.contents('A')),
+					Status: 0x9000, Data: bertlv.Append(nil, test.template, test.contents('1')),
 				}},
 				exchangeStep{command: command, response: iso7816.Response{
-					Status: 0x9000, Data: bertlv.Append(nil, 0x53, test.contents('B')),
+					Status: 0x9000, Data: bertlv.Append(nil, test.template, test.contents('2')),
 				}},
 			)
 
-			for _, want := range []byte{'A', 'B'} {
+			for _, want := range []byte{'1', '2'} {
 				if got, err := test.read(t.Context(), d); err != nil || got != want {
 					t.Fatalf("read = %02x, %v, want %02x", got, err, want)
 				}
@@ -97,12 +225,12 @@ func TestTypedObjectReadsPreserveErrors(t *testing.T) {
 			}{
 				{name: "absent", response: iso7816.Response{Status: 0x6a82}, status: 0x6a82},
 				{name: "access denied", response: iso7816.Response{Status: 0x6982}, status: 0x6982},
-				{name: "malformed contents", response: iso7816.Response{Status: 0x9000, Data: []byte{0x53, 2, 0xfe, 0}}, want: protocol.ErrInvalidResponse},
+				{name: "malformed contents", response: iso7816.Response{Status: 0x9000, Data: bertlv.Append(nil, object.template, []byte{0xfe, 0})}, want: protocol.ErrInvalidResponse},
 				{name: "transport", err: cause, want: cause},
 			} {
 				t.Run(test.name, func(t *testing.T) {
 					d, raw := newDevice(t, exchangeStep{
-						command:  []byte{0, 0xcb, 0x3f, 0xff, 5, 0x5c, 3, 0x5f, 0xc1, object.selector, 0},
+						command:  object.command(),
 						response: test.response, err: test.err,
 					})
 					_, err := object.read(t.Context(), d)
@@ -132,7 +260,7 @@ func TestTypedObjectReadsInvalidationClosesSession(t *testing.T) {
 	for _, object := range objectReadCases() {
 		t.Run(object.name, func(t *testing.T) {
 			d, raw := newDevice(t, exchangeStep{
-				command: []byte{0, 0xcb, 0x3f, 0xff, 5, 0x5c, 3, 0x5f, 0xc1, object.selector, 0},
+				command: object.command(),
 				err:     &transport.DeviceInvalidatedError{Err: cause},
 			})
 			raw.closeErr = closeError
