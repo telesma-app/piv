@@ -2,7 +2,9 @@ package protocol
 
 import (
 	"bytes"
+	"crypto/ecdh"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rsa"
 	"errors"
@@ -20,6 +22,7 @@ func TestParseRSAPublicKey(t *testing.T) {
 		{name: "RSA 1024", algorithm: RSA1024, bits: 1024},
 		{name: "RSA 2048", algorithm: RSA2048, bits: 2048},
 		{name: "RSA 3072", algorithm: RSA3072, bits: 3072},
+		{name: "RSA 4096", algorithm: RSA4096, bits: 4096},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			modulus := bytes.Repeat([]byte{0xab}, tt.bits/8)
@@ -106,6 +109,7 @@ func TestParseECCPublicKey(t *testing.T) {
 	}{
 		{name: "P-256", algorithm: ECCP256, curve: elliptic.P256()},
 		{name: "P-384", algorithm: ECCP384, curve: elliptic.P384()},
+		{name: "P-521", algorithm: ECCP521, curve: elliptic.P521()},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			point := generatorPoint(tt.curve)
@@ -128,6 +132,63 @@ func TestParseECCPublicKey(t *testing.T) {
 
 			if key.Curve != tt.curve || !bytes.Equal(encoded, point) {
 				t.Errorf("key = %v, want %s generator", key, tt.name)
+			}
+		})
+	}
+}
+
+func TestParse25519PublicKeyWire(t *testing.T) {
+	// RFC 8032, Section 7.1, test 1 (Ed25519) and RFC 7748, Section 6.1
+	// (Alice's X25519 public key), wrapped in the PIV tag 86 representation.
+	for _, tc := range []struct {
+		name      string
+		algorithm Algorithm
+		publicKey []byte
+	}{
+		{
+			name: "Ed25519", algorithm: Ed25519,
+			publicKey: []byte{
+				0xd7, 0x5a, 0x98, 0x01, 0x82, 0xb1, 0x0a, 0xb7, 0xd5, 0x4b, 0xfe, 0xd3, 0xc9, 0x64, 0x07, 0x3a,
+				0x0e, 0xe1, 0x72, 0xf3, 0xda, 0xa6, 0x23, 0x25, 0xaf, 0x02, 0x1a, 0x68, 0xf7, 0x07, 0x51, 0x1a,
+			},
+		},
+		{
+			name: "X25519", algorithm: X25519,
+			publicKey: []byte{
+				0x85, 0x20, 0xf0, 0x09, 0x89, 0x30, 0xa7, 0x54, 0x74, 0x8b, 0x7d, 0xdc, 0xb4, 0x3e, 0xf7, 0x5a,
+				0x0d, 0xbf, 0x3a, 0x0d, 0x26, 0x38, 0x1a, 0xf4, 0xeb, 0xa4, 0xa9, 0x8e, 0xaa, 0x9b, 0x4e, 0x6a,
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := append([]byte{0x7f, 0x49, 0x22, 0x86, 0x20}, tc.publicKey...)
+
+			publicKey, err := ParsePublicKey(tc.algorithm, data)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var encoded []byte
+
+			switch tc.algorithm {
+			case Ed25519:
+				key, ok := publicKey.(ed25519.PublicKey)
+				if !ok {
+					t.Fatalf("key type = %T, want ed25519.PublicKey", publicKey)
+				}
+
+				encoded = key
+			case X25519:
+				key, ok := publicKey.(*ecdh.PublicKey)
+				if !ok || key.Curve() != ecdh.X25519() {
+					t.Fatalf("key = %v, want X25519 *ecdh.PublicKey", publicKey)
+				}
+
+				encoded = key.Bytes()
+			}
+
+			if !bytes.Equal(encoded, tc.publicKey) {
+				t.Errorf("public key = %x, want %x", encoded, tc.publicKey)
 			}
 		})
 	}
@@ -163,6 +224,10 @@ func TestParsePublicKeyRejectsInvalidResponse(t *testing.T) {
 		{name: "curve mismatch", algorithm: ECCP384, data: encode(pointTLV)},
 		{name: "point outside curve", algorithm: ECCP256, data: encode(bertlv.Append(nil, 0x86, append([]byte{0x04}, make([]byte, 64)...)))},
 		{name: "compressed point", algorithm: ECCP256, data: encode(bertlv.Append(nil, 0x86, append([]byte{0x03}, point[1:33]...)))},
+		{name: "P-521 curve mismatch", algorithm: ECCP521, data: encode(pointTLV)},
+		{name: "RSA-4096 size mismatch", algorithm: RSA4096, data: encode(rsaData)},
+		{name: "RSA parameters for Ed25519", algorithm: Ed25519, data: encode(rsaData)},
+		{name: "RSA parameters for X25519", algorithm: X25519, data: encode(rsaData)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -171,6 +236,18 @@ func TestParsePublicKeyRejectsInvalidResponse(t *testing.T) {
 				t.Errorf("error = %v, want ErrInvalidResponse", err)
 			}
 		})
+	}
+
+	for _, algorithm := range []Algorithm{Ed25519, X25519} {
+		for _, size := range []int{0, 31, 33, 65} {
+			t.Run("invalid 25519 public key length", func(t *testing.T) {
+				data := encode(bertlv.Append(nil, 0x86, make([]byte, size)))
+
+				if _, err := ParsePublicKey(algorithm, data); !errors.Is(err, ErrInvalidResponse) {
+					t.Errorf("algorithm %02x, length %d: error = %v, want ErrInvalidResponse", byte(algorithm), size, err)
+				}
+			})
+		}
 	}
 
 	for _, exponent := range [][]byte{nil, {0}, {1}, {2}, {4}, {0x80, 0, 0, 1}, {1, 0, 0, 0, 1}} {

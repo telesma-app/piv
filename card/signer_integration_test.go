@@ -2,6 +2,7 @@ package card
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
@@ -15,24 +16,43 @@ func TestSignerCreatesVerifiableCertificateRequests(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		algorithm x509.SignatureAlgorithm
-		rsa       bool
+		key       protocol.Algorithm
 	}{
-		{name: "ECDSA", algorithm: x509.ECDSAWithSHA256},
-		{name: "RSA PKCS1v15", algorithm: x509.SHA256WithRSA, rsa: true},
-		{name: "RSA PSS", algorithm: x509.SHA256WithRSAPSS, rsa: true},
+		{name: "ECDSA P-256", algorithm: x509.ECDSAWithSHA256, key: protocol.ECCP256},
+		{name: "ECDSA P-521", algorithm: x509.ECDSAWithSHA512, key: protocol.ECCP521},
+		{name: "Ed25519", algorithm: x509.PureEd25519, key: protocol.Ed25519},
+		{name: "RSA PKCS1v15", algorithm: x509.SHA256WithRSA, key: protocol.RSA2048},
+		{name: "RSA PSS", algorithm: x509.SHA256WithRSAPSS, key: protocol.RSA2048},
+		{name: "RSA-4096", algorithm: x509.SHA512WithRSA, key: protocol.RSA4096},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var key *PrivateKey
 
 			var raw *signaturePeer
-			if tc.rsa {
+
+			switch tc.key {
+			case protocol.RSA2048:
 				key, raw = newRSASigningPeer(t)
-			} else {
+			case protocol.RSA4096:
+				key, raw = newRSASigningPeer(t)
+				raw.rsa, raw.algorithm = signingRSA4096(t), protocol.RSA4096
+
+				var err error
+
+				key, err = key.device.PrivateKey(protocol.DigitalSignature, &raw.rsa.PublicKey)
+				if err != nil {
+					t.Fatal(err)
+				}
+			case protocol.ECCP521:
+				key, raw = newECDSASigningPeer(t, elliptic.P521(), protocol.DigitalSignature)
+			case protocol.Ed25519:
+				key, raw = newEd25519SigningPeer(t, ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize)))
+			default:
 				key, raw = newECDSASigningPeer(t, elliptic.P256(), 0x9c)
 			}
 
 			adapter := key.Signer(t.Context(), PINAuthentication(protocol.ApplicationPIN, signingPIN))
-			if adapter.Public() != key.Public() {
+			if tc.key != protocol.Ed25519 && adapter.Public() != key.Public() {
 				t.Fatal("Signer.Public returned a different public key")
 			}
 

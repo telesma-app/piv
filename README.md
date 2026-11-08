@@ -10,16 +10,24 @@ workflows over [ISO 7816](https://github.com/telesma-app/iso7816) and
 > [!WARNING]
 > This module is under active development. Its public API may change during `v0.x`.
 
-## Support
+## Features
 
 - Card metadata, Discovery and Key History.
 - X.509 certificate reading and DER export from all 24 standard slots.
 - PIN status, verification, change and unblock.
-- RSA and ECDSA signing, RSA decryption and ECDH, with Go crypto adapters.
+- RSA, ECDSA and Ed25519 signing, RSA decryption and ECDH, with Go crypto adapters.
 - Key generation and certificate installation with administration authentication.
 - NIST PIV CS2/CS7 secure messaging and GlobalPlatform SCP11b channels.
 
 Available operations depend on the card and its access policy.
+
+Private-key workflows support RSA-1024/2048/3072/4096, ECDSA P-256/P-384/P-521,
+pure Ed25519, and ECDH with P-256/P-384/P-521 or X25519. RSA-4096, P-521, Ed25519
+and X25519 use common card extension identifiers and require compatible firmware.
+Ed25519 signs the original message with `crypto.Hash(0)` or empty
+`*ed25519.Options`; Ed25519ph and Ed25519ctx are unsupported. X25519 public keys
+can come from generation, vendor metadata, or
+`x509.ParsePKIXPublicKey(certificate.RawSubjectPublicKeyInfo)`.
 
 See the [Go API reference](https://pkg.go.dev/github.com/telesma-app/piv)
 for command and type details.
@@ -27,7 +35,7 @@ for command and type details.
 ## Installation
 
 ```sh
-go get github.com/telesma-app/piv@v0.3.1
+go get github.com/telesma-app/piv@latest
 ```
 
 See [`go.mod`](go.mod) for the required Go version.
@@ -133,8 +141,8 @@ See [`examples/README.md`](examples/README.md) for prerequisites and commands.
 ## Development
 
 ```sh
-go test ./...
-go vet ./...
+GOWORK=off go test ./...
+GOWORK=off go vet ./...
 make lint
 ```
 

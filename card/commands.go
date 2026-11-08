@@ -146,7 +146,8 @@ func (d *Device) GenerateAsymmetricKeyPair(
 	// Reject an algorithm whose generated public key cannot be parsed before
 	// starting administration authentication.
 	switch request.Algorithm {
-	case protocol.RSA1024, protocol.RSA2048, protocol.RSA3072, protocol.ECCP256, protocol.ECCP384:
+	case protocol.RSA1024, protocol.RSA2048, protocol.RSA3072, protocol.RSA4096,
+		protocol.ECCP256, protocol.ECCP384, protocol.ECCP521, protocol.Ed25519, protocol.X25519:
 	default:
 		return nil, fmt.Errorf("piv: unsupported public key algorithm %02x", byte(request.Algorithm))
 	}

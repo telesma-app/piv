@@ -2,7 +2,9 @@ package protocol
 
 import (
 	"crypto"
+	"crypto/ecdh"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rsa"
 	"fmt"
@@ -26,9 +28,10 @@ type GenerateAsymmetricKeyPairRequest struct {
 }
 
 // ParsePublicKey parses a GENERATE ASYMMETRIC KEY PAIR response (tag 0x7f49).
-// The key must match the requested algorithm. The result is an *rsa.PublicKey
-// or an *ecdsa.PublicKey. RSA public exponents must fit the positive 31-bit
-// range supported by crypto/rsa, a subset of the PIV exponent range.
+// The key must match the requested algorithm. The result is an *rsa.PublicKey,
+// *ecdsa.PublicKey, ed25519.PublicKey, or an X25519 *ecdh.PublicKey. Ed25519 public
+// keys borrow data. RSA public exponents must fit the positive 31-bit range
+// supported by crypto/rsa, a subset of the PIV exponent range.
 func ParsePublicKey(algorithm Algorithm, data []byte) (crypto.PublicKey, error) {
 	var (
 		bits  int
@@ -42,10 +45,16 @@ func ParsePublicKey(algorithm Algorithm, data []byte) (crypto.PublicKey, error) 
 		bits = 2048
 	case RSA3072:
 		bits = 3072
+	case RSA4096:
+		bits = 4096
 	case ECCP256:
 		curve = elliptic.P256()
 	case ECCP384:
 		curve = elliptic.P384()
+	case ECCP521:
+		curve = elliptic.P521()
+	case Ed25519:
+	case X25519:
 	default:
 		return nil, fmt.Errorf("piv: unsupported public key algorithm %02x", byte(algorithm))
 	}
@@ -85,9 +94,25 @@ func ParsePublicKey(algorithm Algorithm, data []byte) (crypto.PublicKey, error) 
 		*field = value
 	}
 
-	if curve != nil {
+	if bits == 0 {
 		if modulus != nil || exponent != nil {
 			return nil, fmt.Errorf("%w: RSA parameters for an ECC key", ErrInvalidResponse)
+		}
+
+		switch algorithm {
+		case Ed25519:
+			if len(point) != ed25519.PublicKeySize {
+				return nil, fmt.Errorf("%w: invalid Ed25519 public key length %d", ErrInvalidResponse, len(point))
+			}
+
+			return ed25519.PublicKey(point), nil
+		case X25519:
+			key, err := ecdh.X25519().NewPublicKey(point)
+			if err != nil {
+				return nil, fmt.Errorf("%w: X25519 public key: %v", ErrInvalidResponse, err)
+			}
+
+			return key, nil
 		}
 
 		key, err := ecdsa.ParseUncompressedPublicKey(curve, point)

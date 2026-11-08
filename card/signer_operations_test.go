@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"context"
 	"crypto"
+	"crypto/ecdh"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -24,6 +27,247 @@ import (
 	"github.com/telesma-app/piv/protocol"
 	"github.com/telesma-app/piv/transport"
 )
+
+func TestEd25519SignRFC8032Vectors(t *testing.T) {
+	decode := func(value string) []byte {
+		t.Helper()
+
+		data, err := hex.DecodeString(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		return data
+	}
+
+	// RFC 8032, Section 7.1, TEST 1 and TEST 2.
+	for _, tc := range []struct {
+		name      string
+		seed      string
+		message   []byte
+		signature string
+		opts      crypto.SignerOpts
+	}{
+		{
+			name: "nil message", seed: "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+			signature: "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e06522490155" +
+				"5fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b",
+			opts: crypto.Hash(0),
+		},
+		{
+			name: "empty message", seed: "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+			message: []byte{},
+			signature: "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e06522490155" +
+				"5fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b",
+			opts: &ed25519.Options{},
+		},
+		{
+			name: "one byte", seed: "4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb",
+			message: []byte{0x72},
+			signature: "92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da" +
+				"085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00",
+			opts: crypto.Hash(0),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			private := ed25519.NewKeyFromSeed(decode(tc.seed))
+			key, raw := newEd25519SigningPeer(t, private)
+
+			signature, err := key.Sign(t.Context(), nil, tc.message, tc.opts, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if !bytes.Equal(signature, decode(tc.signature)) {
+				t.Errorf("Ed25519 signature = %x, want %s", signature, tc.signature)
+			}
+
+			if len(raw.inputs) != 1 || raw.inputs[0] == nil || !bytes.Equal(raw.inputs[0], tc.message) {
+				t.Errorf("Ed25519 input = %x; want the original, present message %x", raw.inputs, tc.message)
+			}
+		})
+	}
+}
+
+func TestEd25519SignerPreservesLongMessage(t *testing.T) {
+	private := ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
+	key, raw := newEd25519SigningPeer(t, private)
+	message := bytes.Repeat([]byte("PIV Ed25519 message without host hashing"), 100)
+	original := bytes.Clone(message)
+
+	signature, err := key.Signer(t.Context(), PINAuthentication(protocol.ApplicationPIN, signingPIN)).Sign(nil, message, crypto.Hash(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !ed25519.Verify(private.Public().(ed25519.PublicKey), original, signature) {
+		t.Error("signature does not verify against the original message")
+	}
+
+	if !bytes.Equal(message, original) || len(raw.inputs) != 1 || !bytes.Equal(raw.inputs[0], original) {
+		t.Error("signing changed or hashed the borrowed message")
+	}
+
+	if raw.verifies != 1 || raw.signatures != 1 {
+		t.Errorf("VERIFY/signature counts = %d/%d, want 1/1", raw.verifies, raw.signatures)
+	}
+}
+
+func TestEd25519RejectsUnsupportedOptionsBeforeAuthentication(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts crypto.SignerOpts
+	}{
+		{name: "prehashed", opts: crypto.SHA512},
+		{name: "Ed25519ph", opts: &ed25519.Options{Hash: crypto.SHA512}},
+		{name: "Ed25519ctx", opts: &ed25519.Options{Context: "PIV"}},
+		{name: "RSA-PSS", opts: &rsa.PSSOptions{Hash: crypto.SHA512}},
+		{name: "other options", opts: otherSigningOptions{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			key, raw := newEd25519SigningPeer(t, ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize)))
+			prompts := 0
+			authentication := func(context.Context) (protocol.VerifyRequest, error) {
+				prompts++
+				return protocol.VerifyRequest{Reference: protocol.ApplicationPIN}, nil
+			}
+
+			if _, err := key.Sign(t.Context(), nil, []byte("message"), tc.opts, authentication); err == nil {
+				t.Fatal("unsupported Ed25519 options accepted")
+			}
+
+			if prompts != 0 || len(raw.instructions) != 0 {
+				t.Error("unsupported options prompted or performed I/O")
+			}
+		})
+	}
+}
+
+func TestEd25519RejectsInvalidResponsesAndStaleBinding(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		response func([]byte) iso7816.Response
+		stale    bool
+	}{
+		{name: "empty signature", response: func([]byte) iso7816.Response { return signatureResponse([]byte{}) }},
+		{name: "short signature", response: func(sig []byte) iso7816.Response { return signatureResponse(sig[:63]) }},
+		{name: "tampered signature", response: func(sig []byte) iso7816.Response { sig[0] ^= 1; return signatureResponse(sig) }},
+		{name: "slot key replaced", stale: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			key, raw := newEd25519SigningPeer(t, ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize)))
+
+			raw.response = tc.response
+			if tc.stale {
+				raw.ed = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{1}, ed25519.SeedSize))
+			}
+
+			signature, err := key.Sign(t.Context(), nil, []byte("untrusted Ed25519 response"), crypto.Hash(0), nil)
+			if signature != nil || !errors.Is(err, protocol.ErrInvalidResponse) {
+				t.Fatalf("Sign = %x, %v; want invalid response without signature", signature, err)
+			}
+
+			if raw.closeCalls != 0 {
+				t.Error("invalid signature closed a usable connection")
+			}
+		})
+	}
+}
+
+func TestX25519CannotSignBeforeAuthentication(t *testing.T) {
+	device, raw := newDevice(t)
+
+	private, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	key, err := device.PrivateKey(protocol.KeyManagement, private.PublicKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	prompts := 0
+	authentication := func(context.Context) (protocol.VerifyRequest, error) {
+		prompts++
+		return protocol.VerifyRequest{}, nil
+	}
+
+	if _, err := key.Sign(t.Context(), nil, []byte("message"), crypto.Hash(0), authentication); err == nil {
+		t.Fatal("X25519 signing accepted")
+	}
+
+	if prompts != 0 || raw.calls != 0 {
+		t.Error("X25519 signing prompted or performed I/O")
+	}
+}
+
+func TestP521SigningPreservesDigestLengthAndLeadingZeros(t *testing.T) {
+	for _, hash := range []crypto.Hash{crypto.SHA256, crypto.SHA512} {
+		t.Run(hash.String(), func(t *testing.T) {
+			key, raw := newECDSASigningPeer(t, elliptic.P521(), protocol.DigitalSignature)
+			digest := make([]byte, hash.Size())
+			digest[1], digest[len(digest)-1] = 0x80, 0x42
+			original := bytes.Clone(digest)
+
+			signature, err := key.Sign(t.Context(), nil, digest, hash, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if !ecdsa.VerifyASN1(&raw.ec.PublicKey, original, signature) {
+				t.Error("P-521 signature does not verify against the original digest")
+			}
+
+			if !bytes.Equal(digest, original) || len(raw.inputs) != 1 || !bytes.Equal(raw.inputs[0], original) {
+				t.Errorf("P-521 wire input = %x, want original digest %x", raw.inputs, original)
+			}
+		})
+	}
+}
+
+func TestRSA4096SignatureSchemes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts crypto.SignerOpts
+	}{
+		{name: "PKCS1v15", opts: crypto.SHA512},
+		{name: "PSS", opts: &rsa.PSSOptions{Hash: crypto.SHA512, SaltLength: rsa.PSSSaltLengthEqualsHash}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			key, raw := newRSASigningPeer(t)
+			raw.rsa, raw.algorithm = signingRSA4096(t), protocol.RSA4096
+
+			var err error
+
+			key, err = key.device.PrivateKey(protocol.DigitalSignature, &raw.rsa.PublicKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			digest := sha512.Sum512([]byte("RSA-4096 host encoding"))
+
+			signature, err := key.Sign(t.Context(), rand.Reader, digest[:], tc.opts, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if opts, ok := tc.opts.(*rsa.PSSOptions); ok {
+				err = rsa.VerifyPSS(&raw.rsa.PublicKey, crypto.SHA512, digest[:], signature, opts)
+			} else {
+				err = rsa.VerifyPKCS1v15(&raw.rsa.PublicKey, crypto.SHA512, digest[:], signature)
+			}
+
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if len(signature) != 512 || len(raw.inputs) != 1 || len(raw.inputs[0]) != 512 {
+				t.Error("RSA-4096 signing did not use a complete 512-byte block")
+			}
+		})
+	}
+}
 
 func TestECDSASignTruncatesDigestAndVerifiesEveryTime(t *testing.T) {
 	digest := sha512.Sum512([]byte("PIV ECDSA input truncation"))

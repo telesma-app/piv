@@ -2,8 +2,11 @@ package client
 
 import (
 	"bytes"
+	"crypto/ecdh"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
+	"crypto/rsa"
 	"errors"
 	"testing"
 
@@ -207,5 +210,91 @@ func TestGenerateUnsupportedAlgorithmDoesNotOverwriteKey(t *testing.T) {
 	c := NewClient(newScript(t))
 	if _, err := c.GenerateAsymmetricKeyPair(t.Context(), protocol.GenerateAsymmetricKeyPairRequest{Key: protocol.PIVAuthentication, Algorithm: protocol.AES128}); err == nil {
 		t.Fatal("expected unsupported key generation algorithm")
+	}
+}
+
+func TestGenerateExtensionKeyPair(t *testing.T) {
+	modulus := bytes.Repeat([]byte{0xab}, 512)
+	rsaData := append([]byte{0x7f, 0x49, 0x82, 0x02, 0x09, 0x81, 0x82, 0x02, 0x00}, modulus...)
+	rsaData = append(rsaData, 0x82, 0x03, 0x01, 0x00, 0x01)
+	curve := elliptic.P521()
+	point := make([]byte, 133)
+	point[0] = 4
+	curve.Params().Gx.FillBytes(point[1:67])
+	curve.Params().Gy.FillBytes(point[67:])
+	eccData := append([]byte{0x7f, 0x49, 0x81, 0x88, 0x86, 0x81, 0x85}, point...)
+	public25519 := bytes.Repeat([]byte{0x42}, 32)
+	data25519 := append([]byte{0x7f, 0x49, 0x22, 0x86, 0x20}, public25519...)
+
+	for _, tc := range []struct {
+		name      string
+		algorithm protocol.Algorithm
+		id        byte
+		response  []byte
+	}{
+		{name: "RSA-4096", algorithm: protocol.RSA4096, id: 0x16, response: rsaData},
+		{name: "P-521", algorithm: protocol.ECCP521, id: 0x15, response: eccData},
+		{name: "Ed25519", algorithm: protocol.Ed25519, id: 0xe0, response: data25519},
+		{name: "X25519", algorithm: protocol.X25519, id: 0xe1, response: data25519},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := NewClient(newScript(t, exchangeStep{
+				command:  []byte{0, 0x47, 0, 0x9a, 5, 0xac, 3, 0x80, 1, tc.id, 0},
+				response: iso7816.Response{Status: 0x9000, Data: tc.response},
+			}))
+
+			publicKey, err := c.GenerateAsymmetricKeyPair(t.Context(), protocol.GenerateAsymmetricKeyPairRequest{
+				Key: protocol.PIVAuthentication, Algorithm: tc.algorithm,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			switch key := publicKey.(type) {
+			case *rsa.PublicKey:
+				if tc.algorithm != protocol.RSA4096 || key.N.BitLen() != 4096 || key.E != 65537 {
+					t.Errorf("generated key = %v, want RSA-4096", key)
+				}
+			case *ecdsa.PublicKey:
+				if tc.algorithm != protocol.ECCP521 || key.Curve != elliptic.P521() {
+					t.Errorf("generated key = %v, want P-521", key)
+				}
+			case ed25519.PublicKey:
+				if tc.algorithm != protocol.Ed25519 || !bytes.Equal(key, public25519) {
+					t.Errorf("generated key = %x, want Ed25519 %x", key, public25519)
+				}
+			case *ecdh.PublicKey:
+				if tc.algorithm != protocol.X25519 || key.Curve() != ecdh.X25519() || !bytes.Equal(key.Bytes(), public25519) {
+					t.Errorf("generated key = %v, want X25519 %x", key, public25519)
+				}
+			default:
+				t.Fatalf("unexpected generated public key type %T", publicKey)
+			}
+		})
+	}
+}
+
+func TestGenerateInvalidExtensionKeyReportsReplacement(t *testing.T) {
+	for _, algorithm := range []protocol.Algorithm{protocol.Ed25519, protocol.X25519} {
+		t.Run("invalid public key length", func(t *testing.T) {
+			data := append([]byte{0x7f, 0x49, 0x21, 0x86, 0x1f}, make([]byte, 31)...)
+			c := NewClient(newScript(t, exchangeStep{
+				command:  []byte{0, 0x47, 0, 0x9c, 5, 0xac, 3, 0x80, 1, byte(algorithm), 0},
+				response: iso7816.Response{Status: 0x9000, Data: data},
+			}))
+
+			key, err := c.GenerateAsymmetricKeyPair(t.Context(), protocol.GenerateAsymmetricKeyPairRequest{
+				Key: protocol.DigitalSignature, Algorithm: algorithm,
+			})
+
+			var generated *KeyGenerationError
+			if key != nil || !errors.As(err, &generated) || !errors.Is(err, protocol.ErrInvalidResponse) {
+				t.Fatalf("GenerateAsymmetricKeyPair = %v, %v; want acknowledged replacement and ErrInvalidResponse", key, err)
+			}
+
+			if generated.Key != protocol.DigitalSignature || generated.Algorithm != algorithm {
+				t.Errorf("generation error = %+v, want key 9C and algorithm %02x", generated, byte(algorithm))
+			}
+		})
 	}
 }

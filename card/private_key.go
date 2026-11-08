@@ -2,7 +2,9 @@ package card
 
 import (
 	"crypto"
+	"crypto/ecdh"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rsa"
 	"fmt"
@@ -25,7 +27,8 @@ type PrivateKey struct {
 // PrivateKey binds an existing slot and its known public key without I/O. Public
 // keys returned by GenerateAsymmetricKeyPair or read from a matching certificate
 // are suitable.
-// Supported keys are RSA-1024/2048/3072 and ECDSA P-256/P-384.
+// Supported keys are RSA-1024/2048/3072/4096, ECDSA P-256/P-384/P-521,
+// Ed25519 and X25519. X25519 uses an *ecdh.PublicKey and supports ECDH only.
 func (d *Device) PrivateKey(reference protocol.KeyReference, publicKey crypto.PublicKey) (*PrivateKey, error) {
 	if _, err := protocol.CertificateObject(reference); err != nil {
 		return nil, err
@@ -42,6 +45,8 @@ func (d *Device) PrivateKey(reference protocol.KeyReference, publicKey crypto.Pu
 			algorithm = protocol.RSA2048
 		case 3072:
 			algorithm = protocol.RSA3072
+		case 4096:
+			algorithm = protocol.RSA4096
 		default:
 			return nil, fmt.Errorf("piv: unsupported RSA key size %d", key.N.BitLen())
 		}
@@ -51,9 +56,19 @@ func (d *Device) PrivateKey(reference protocol.KeyReference, publicKey crypto.Pu
 			algorithm = protocol.ECCP256
 		case elliptic.P384():
 			algorithm = protocol.ECCP384
+		case elliptic.P521():
+			algorithm = protocol.ECCP521
 		default:
 			return nil, fmt.Errorf("piv: unsupported ECDSA curve %s", key.Curve.Params().Name)
 		}
+	case ed25519.PublicKey:
+		algorithm = protocol.Ed25519
+	case *ecdh.PublicKey:
+		if key.Curve() != ecdh.X25519() {
+			return nil, fmt.Errorf("piv: ECDH public key requires X25519")
+		}
+
+		algorithm = protocol.X25519
 	default:
 		return nil, fmt.Errorf("piv: unsupported public key type %T", publicKey)
 	}

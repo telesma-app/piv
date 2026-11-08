@@ -3,6 +3,7 @@ package card
 import (
 	"bytes"
 	"context"
+	"crypto/elliptic"
 	"crypto/rsa"
 	"errors"
 	"io"
@@ -150,6 +151,58 @@ func TestGenerateRSA3072AuthenticatesBeforeReplacement(t *testing.T) {
 
 	if raw.authentications != 1 || raw.effects != 1 || len(raw.requests) != 3 {
 		t.Errorf("authentication and generation counts = %d, %d, %d", raw.authentications, raw.effects, len(raw.requests))
+	}
+}
+
+func TestGenerateExtensionKeyAuthenticatesBeforeReplacement(t *testing.T) {
+	modulus := bytes.Repeat([]byte{0xab}, 512)
+	rsaData := append([]byte{0x7f, 0x49, 0x82, 0x02, 0x09, 0x81, 0x82, 0x02, 0x00}, modulus...)
+	rsaData = append(rsaData, 0x82, 0x03, 0x01, 0x00, 0x01)
+	curve := elliptic.P521()
+	point := make([]byte, 133)
+	point[0] = 4
+	curve.Params().Gx.FillBytes(point[1:67])
+	curve.Params().Gy.FillBytes(point[67:])
+	eccData := append([]byte{0x7f, 0x49, 0x81, 0x88, 0x86, 0x81, 0x85}, point...)
+	data25519 := append([]byte{0x7f, 0x49, 0x22, 0x86, 0x20}, bytes.Repeat([]byte{0x42}, 32)...)
+
+	for _, tc := range []struct {
+		name      string
+		algorithm protocol.Algorithm
+		id        byte
+		response  []byte
+	}{
+		{name: "RSA-4096", algorithm: protocol.RSA4096, id: 0x16, response: rsaData},
+		{name: "P-521", algorithm: protocol.ECCP521, id: 0x15, response: eccData},
+		{name: "Ed25519", algorithm: protocol.Ed25519, id: 0xe0, response: data25519},
+		{name: "X25519", algorithm: protocol.X25519, id: 0xe1, response: data25519},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d, raw := newAdministrationPeer(t, administrationVectors[0])
+			raw.effect = func(ctx context.Context, command iso7816.Command) (iso7816.Response, error) {
+				encoded, err := command.MarshalBinary()
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				if want := []byte{0, 0x47, 0, 0x9a, 5, 0xac, 3, 0x80, 1, tc.id, 0}; !bytes.Equal(encoded, want) {
+					t.Errorf("GENERATE = %x, want %x", encoded, want)
+				}
+
+				return iso7816.Response{Status: 0x9000, Data: tc.response}, nil
+			}
+
+			_, err := d.GenerateAsymmetricKeyPair(t.Context(), protocol.GenerateAsymmetricKeyPairRequest{
+				Key: protocol.PIVAuthentication, Algorithm: tc.algorithm,
+			}, raw.key)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if raw.authentications != 1 || raw.effects != 1 || len(raw.requests) != 3 {
+				t.Errorf("authentication and generation counts = %d, %d, %d", raw.authentications, raw.effects, len(raw.requests))
+			}
+		})
 	}
 }
 

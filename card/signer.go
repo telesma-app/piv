@@ -3,7 +3,9 @@ package card
 import (
 	"context"
 	"crypto"
+	"crypto/ecdh"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/rsa"
 	"fmt"
 	"io"
@@ -14,11 +16,13 @@ import (
 
 // Signature generation: SP 800-73-5 Part 2, Appendix A.4.
 
-// Sign signs a digest using the slot's private key. Options must be crypto.Hash
-// for RSA PKCS#1 v1.5 or ECDSA, or *rsa.PSSOptions for RSA-PSS. Digest lengths must
-// match the chosen SHA hash. Random is used for PSS salt; other modes obtain any
-// required entropy on the card. Digest and options are borrowed for the call
-// and must not be modified while it is in progress.
+// Sign signs using the slot's private key. RSA PKCS#1 v1.5 and ECDSA take a
+// digest with crypto.Hash options; RSA-PSS takes *rsa.PSSOptions. Digest lengths
+// must match the chosen SHA hash. Ed25519 takes the original message and either
+// crypto.Hash(0) or empty *ed25519.Options; Ed25519ph and Ed25519ctx are unsupported.
+// Random is used for PSS salt; other modes obtain any required entropy on the
+// card. Input and options are borrowed for the call and must not be modified
+// while it is in progress. X25519 keys cannot sign.
 //
 // Authentication follows [AuthenticationSource]. Input preparation precedes
 // the source.
@@ -81,6 +85,30 @@ func (key *PrivateKey) Sign(
 }
 
 func (key *PrivateKey) prepare(random io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	switch key.publicKey.(type) {
+	case ed25519.PublicKey:
+		switch options := opts.(type) {
+		case crypto.Hash:
+			if options != 0 {
+				return nil, fmt.Errorf("piv: Ed25519 requires an unhashed message")
+			}
+		case *ed25519.Options:
+			if options.Hash != 0 || options.Context != "" {
+				return nil, fmt.Errorf("piv: Ed25519ph and Ed25519ctx are unsupported")
+			}
+		default:
+			return nil, fmt.Errorf("piv: unsupported Ed25519 options %T", opts)
+		}
+
+		if len(digest) == 0 {
+			return []byte{}, nil
+		}
+
+		return digest, nil
+	case *ecdh.PublicKey:
+		return nil, fmt.Errorf("piv: X25519 keys cannot sign")
+	}
+
 	hash := opts.HashFunc()
 
 	switch options := opts.(type) {
@@ -102,6 +130,12 @@ func (key *PrivateKey) prepare(random io.Reader, digest []byte, opts crypto.Sign
 	case *ecdsa.PublicKey:
 		if err := signing.ValidateDigest(hash, digest); err != nil {
 			return nil, err
+		}
+
+		// P-521 accepts the original SHA digest, whose length is at most 64
+		// bytes. Preserve that length for its non-byte-aligned curve order.
+		if key.algorithm == protocol.ECCP521 {
+			return digest, nil
 		}
 
 		// PIV cards such as YubiKey require exactly the curve-order width.
@@ -141,6 +175,12 @@ func (key *PrivateKey) verify(digest, signature []byte, opts crypto.SignerOpts) 
 	case *ecdsa.PublicKey:
 		if !ecdsa.VerifyASN1(publicKey, digest, signature) {
 			return fmt.Errorf("invalid ECDSA signature")
+		}
+
+		return nil
+	case ed25519.PublicKey:
+		if !ed25519.Verify(publicKey, digest, signature) {
+			return fmt.Errorf("invalid Ed25519 signature")
 		}
 
 		return nil

@@ -70,6 +70,42 @@ func TestRSADecryptOAEPWithStandardEncryption(t *testing.T) {
 	}
 }
 
+func TestRSA4096DecryptWithStandardEncryption(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts crypto.DecrypterOpts
+	}{
+		{name: "OAEP", opts: &rsa.OAEPOptions{Hash: crypto.SHA256, Label: []byte("PIV RSA-4096")}},
+		{name: "PKCS1v15"},
+		{name: "session key", opts: &rsa.PKCS1v15DecryptOptions{SessionKeyLen: 16}}, //nolint:staticcheck // Legacy PIV compatibility requires PKCS#1 v1.5 support.
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			key, raw := newRSADecryptionPeer(t)
+			raw.rsa = signingRSA4096(t)
+			raw.algorithm = protocol.RSA4096
+
+			var err error
+
+			key, err = key.device.PrivateKey(protocol.KeyManagement, &raw.rsa.PublicKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			message := bytes.Repeat([]byte{0xa5}, 16)
+			ciphertext := rsaCiphertext(t, &raw.rsa.PublicKey, message, tc.opts)
+
+			plaintext, err := key.Decrypter(t.Context(), nil).Decrypt(bytes.NewReader(make([]byte, 16)), ciphertext, tc.opts)
+			if err != nil || !bytes.Equal(plaintext, message) {
+				t.Fatalf("RSA-4096 Decrypt = %x, %v; want %x", plaintext, err, message)
+			}
+
+			if len(ciphertext) != 512 || len(raw.inputs) != 1 || len(raw.inputs[0]) != 512 {
+				t.Fatalf("RSA-4096 ciphertext/input sizes = %d/%v", len(ciphertext), raw.inputs)
+			}
+		})
+	}
+}
+
 func TestRSADecryptPKCS1v15Modes(t *testing.T) {
 	for _, tc := range []struct {
 		name string

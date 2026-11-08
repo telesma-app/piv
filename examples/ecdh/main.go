@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"crypto/x509"
 	"errors"
 	"flag"
 	"fmt"
@@ -73,17 +75,29 @@ func run(ctx context.Context, reader, slot, pin string) (err error) {
 		return err
 	}
 
-	publicKey, ok := certificate.PublicKey.(*ecdsa.PublicKey)
-	if !ok {
-		return fmt.Errorf("slot %02x requires a P-256 or P-384 key, got %T", reference, certificate.PublicKey)
-	}
-
-	key, err := device.PrivateKey(reference, publicKey)
+	// Go's certificate parser leaves X25519 PublicKey unset; its standalone
+	// SPKI parser supports X25519 as well as the NIST curves.
+	publicKey, err := x509.ParsePKIXPublicKey(certificate.RawSubjectPublicKeyInfo)
 	if err != nil {
 		return err
 	}
 
-	cardPublic, err := publicKey.ECDH()
+	var cardPublic *ecdh.PublicKey
+
+	switch public := publicKey.(type) {
+	case *ecdsa.PublicKey:
+		cardPublic, err = public.ECDH()
+	case *ecdh.PublicKey:
+		cardPublic = public
+	default:
+		return fmt.Errorf("slot %02x requires a P-256, P-384, P-521 or X25519 key, got %T", reference, publicKey)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	key, err := device.PrivateKey(reference, publicKey)
 	if err != nil {
 		return err
 	}
@@ -122,7 +136,7 @@ func run(ctx context.Context, reader, slot, pin string) (err error) {
 	}
 	defer clear(derived)
 
-	_, err = fmt.Printf("%s ECDH agreement verified; derived %d bytes with HKDF-SHA-256\n", publicKey.Curve.Params().Name, len(derived))
+	_, err = fmt.Printf("%v ECDH agreement verified; derived %d bytes with HKDF-SHA-256\n", cardPublic.Curve(), len(derived))
 
 	return err
 }

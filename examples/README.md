@@ -16,7 +16,7 @@ and operations depend on the card and its access policy.
 `csr` adapts the existing digital-signature key in slot **9c** to `crypto.Signer`
 and passes it to `x509.CreateCertificateRequest`. The matching certificate must
 already be installed in the slot so the example can read its public key.
-Supported keys are RSA-1024/2048/3072 and ECDSA P-256/P-384.
+Supported keys are RSA-1024/2048/3072/4096, ECDSA P-256/P-384/P-521 and Ed25519.
 
 Set the `PIV_PIN` environment variable to your application PIN, then run:
 
@@ -42,12 +42,12 @@ With `PIV_PIN` set:
 go run ./examples/rsa-oaep -reader 'exact PC/SC reader name'
 ```
 
-This requires an existing RSA-1024/2048/3072 key and matching certificate in 9d.
+This requires an existing RSA-1024/2048/3072/4096 key and matching certificate in 9d.
 The example prints the round-trip result and plaintext length.
 
 ## ECDH key agreement
 
-`ecdh` requires an existing P-256 or P-384 key and matching certificate in
+`ecdh` requires an existing P-256, P-384, P-521 or X25519 key and matching certificate in
 key-management slot **9d** (the default) or a retired slot **82** through **95**.
 It creates a local ephemeral software peer, computes both sides of the agreement,
 and checks that their shared secrets match. It derives a 32-byte application key
@@ -68,6 +68,10 @@ go run ./examples/ecdh -reader 'exact PC/SC reader name' -slot 82
 
 The software peer makes this a local demonstration. An application protocol must
 authenticate its peers and bind its protocol context to the derived key.
+
+For X25519 certificates, the example reads the public key with
+`x509.ParsePKIXPublicKey(certificate.RawSubjectPublicKeyInfo)`: Go's certificate
+parser preserves the SPKI but leaves `certificate.PublicKey` unset for X25519.
 
 ## NIST secure messaging
 

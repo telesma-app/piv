@@ -3,11 +3,13 @@ package card
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 	"testing"
@@ -26,6 +28,8 @@ func ecdhScalar(t testing.TB, curve ecdh.Curve, scalar byte) *ecdh.PrivateKey {
 	width := 32
 	if curve == ecdh.P384() {
 		width = 48
+	} else if curve == ecdh.P521() {
+		width = 66
 	}
 
 	encoded := make([]byte, width)
@@ -39,14 +43,25 @@ func ecdhScalar(t testing.TB, curve ecdh.Curve, scalar byte) *ecdh.PrivateKey {
 	return private
 }
 
-func ecdhMaterial(t testing.TB, curve ecdh.Curve) (*ecdsa.PublicKey, *ecdh.PublicKey, []byte) {
+func ecdhMaterial(t testing.TB, curve ecdh.Curve) (crypto.PublicKey, *ecdh.PublicKey, []byte) {
 	t.Helper()
 	card := ecdhScalar(t, curve, 7)
 	peer := ecdhScalar(t, curve, 11)
 
+	want, err := peer.ECDH(card.PublicKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if curve == ecdh.X25519() {
+		return card.PublicKey(), peer.PublicKey(), want
+	}
+
 	legacyCurve := elliptic.P256()
 	if curve == ecdh.P384() {
 		legacyCurve = elliptic.P384()
+	} else if curve == ecdh.P521() {
+		legacyCurve = elliptic.P521()
 	}
 
 	public, err := ecdsa.ParseUncompressedPublicKey(legacyCurve, card.PublicKey().Bytes())
@@ -54,15 +69,10 @@ func ecdhMaterial(t testing.TB, curve ecdh.Curve) (*ecdsa.PublicKey, *ecdh.Publi
 		t.Fatal(err)
 	}
 
-	want, err := peer.ECDH(card.PublicKey())
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	return public, peer.PublicKey(), want
 }
 
-func bindECDH(t testing.TB, device *Device, reference protocol.KeyReference, public *ecdsa.PublicKey) *PrivateKey {
+func bindECDH(t testing.TB, device *Device, reference protocol.KeyReference, public crypto.PublicKey) *PrivateKey {
 	t.Helper()
 
 	key, err := device.PrivateKey(reference, public)
@@ -73,11 +83,16 @@ func bindECDH(t testing.TB, device *Device, reference protocol.KeyReference, pub
 	return key
 }
 
-// Both supported curves fit one-byte TLV lengths and one short command APDU.
 // Keep the wire oracle independent of the production authentication encoder.
 func ecdhCommand(algorithm protocol.Algorithm, reference protocol.KeyReference, peer *ecdh.PublicKey) []byte {
 	point := peer.Bytes()
+
 	command := []byte{0, 0x87, byte(algorithm), byte(reference), byte(len(point) + 6), 0x7c, byte(len(point) + 4), 0x82, 0, 0x85, byte(len(point))}
+	if peer.Curve() == ecdh.P521() {
+		// The 133-byte uncompressed P-521 point needs long-form TLV lengths.
+		command = []byte{0, 0x87, byte(algorithm), byte(reference), 0x8d, 0x7c, 0x81, 0x8a, 0x82, 0, 0x85, 0x81, 0x85}
+	}
+
 	command = append(command, point...)
 
 	return append(command, 0)
@@ -96,6 +111,8 @@ func TestECDHMatchesStandardPrimitive(t *testing.T) {
 	}{
 		{name: "P-256", curve: ecdh.P256(), algorithm: protocol.ECCP256},
 		{name: "P-384", curve: ecdh.P384(), algorithm: protocol.ECCP384},
+		{name: "P-521", curve: ecdh.P521(), algorithm: protocol.ECCP521},
+		{name: "X25519", curve: ecdh.X25519(), algorithm: protocol.X25519},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, reference := range []protocol.KeyReference{protocol.KeyManagement, protocol.RetiredKey1, protocol.RetiredKey20} {
@@ -115,6 +132,80 @@ func TestECDHMatchesStandardPrimitive(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestX25519RFC7748(t *testing.T) {
+	// RFC 7748, Section 6.1: Alice's public key, Bob's public key and their
+	// shared secret. Wire bytes retain the RFC's little-endian representation.
+	decode := func(value string) []byte {
+		t.Helper()
+
+		data, err := hex.DecodeString(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		return data
+	}
+
+	public, err := ecdh.X25519().NewPublicKey(decode("8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	peer, err := ecdh.X25519().NewPublicKey(decode("de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := decode("4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742")
+	device, _ := newDevice(t, exchangeStep{
+		command: ecdhCommand(protocol.X25519, protocol.KeyManagement, peer), response: ecdhResponse(want),
+	})
+	key := bindECDH(t, device, protocol.KeyManagement, public)
+
+	got, err := key.ECDH(t.Context(), peer, nil)
+	if err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("X25519 = %x, %v; want RFC 7748 secret %x", got, err, want)
+	}
+}
+
+func TestX25519RejectsInvalidResponses(t *testing.T) {
+	for _, size := range []int{0, 31, 32, 33} {
+		t.Run(fmt.Sprintf("%d zero bytes", size), func(t *testing.T) {
+			public, peer, _ := ecdhMaterial(t, ecdh.X25519())
+			device, raw := newDevice(t,
+				exchangeStep{command: ecdhCommand(protocol.X25519, protocol.KeyManagement, peer), response: ecdhResponse(make([]byte, size))},
+				exchangeStep{command: []byte{0, 0xfd, 0, 0}, response: iso7816.Response{Status: 0x9000}},
+			)
+			key := bindECDH(t, device, protocol.KeyManagement, public)
+
+			secret, err := key.ECDH(t.Context(), peer, nil)
+			if secret != nil || !errors.Is(err, protocol.ErrInvalidResponse) {
+				t.Fatalf("X25519 = %x, %v; want invalid response", secret, err)
+			}
+
+			if _, err := device.Exchange(t.Context(), iso7816.Command{INS: 0xfd}); err != nil || raw.closeCalls != 0 {
+				t.Fatalf("completed invalid X25519 response invalidated the connection: %v, closes=%d", err, raw.closeCalls)
+			}
+		})
+	}
+}
+
+func TestX25519RejectsNISTPeerBeforeAuthentication(t *testing.T) {
+	public, _, _ := ecdhMaterial(t, ecdh.X25519())
+	_, peer, _ := ecdhMaterial(t, ecdh.P256())
+	device, _ := newDevice(t)
+	key := bindECDH(t, device, protocol.KeyManagement, public)
+	sourced := false
+
+	secret, err := key.ECDH(t.Context(), peer, func(context.Context) (protocol.VerifyRequest, error) {
+		sourced = true
+		return protocol.VerifyRequest{}, nil
+	})
+	if secret != nil || err == nil || sourced {
+		t.Fatalf("X25519 with P-256 peer = %x, %v; sourced=%t", secret, err, sourced)
 	}
 }
 

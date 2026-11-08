@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
@@ -14,6 +15,7 @@ import (
 	"math/big"
 	"testing"
 
+	"github.com/telesma-app/bertlv"
 	"github.com/telesma-app/iso7816"
 	"github.com/telesma-app/piv/protocol"
 	"github.com/telesma-app/piv/transport"
@@ -104,6 +106,74 @@ func signingRSA(t testing.TB) *rsa.PrivateKey {
 	return parsed.(*rsa.PrivateKey)
 }
 
+// This PKCS#8 fixture is Go 1.27.3 crypto/rsa's test4096Key.
+// Parse it afresh so tests own their mutable key state.
+const signingRSA4096Fixture = `-----BEGIN PRIVATE KEY-----
+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
+Axreud3rJ0rekUp6rI1joG717Wls
+-----END PRIVATE KEY-----`
+
+func signingRSA4096(t testing.TB) *rsa.PrivateKey {
+	t.Helper()
+
+	block, _ := pem.Decode([]byte(signingRSA4096Fixture))
+
+	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return parsed.(*rsa.PrivateKey)
+}
+
 func signingECDSA(t testing.TB, curve elliptic.Curve) *ecdsa.PrivateKey {
 	t.Helper()
 
@@ -124,6 +194,7 @@ type signaturePeer struct {
 	authenticationReference protocol.KeyReference
 	authenticationData      []byte
 	ec                      *ecdsa.PrivateKey
+	ed                      ed25519.PrivateKey
 	rsa                     *rsa.PrivateKey
 	instructions            []byte
 	inputs                  [][]byte
@@ -145,6 +216,8 @@ func newECDSASigningPeer(t testing.TB, curve elliptic.Curve, reference protocol.
 	algorithm := protocol.ECCP256
 	if curve == elliptic.P384() {
 		algorithm = protocol.ECCP384
+	} else if curve == elliptic.P521() {
+		algorithm = protocol.ECCP521
 	}
 
 	raw := &signaturePeer{
@@ -178,6 +251,26 @@ func newRSASigningPeer(t testing.TB) (*PrivateKey, *signaturePeer) {
 	t.Cleanup(func() { _ = device.Close() })
 
 	key, err := device.PrivateKey(protocol.DigitalSignature, &private.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return key, raw
+}
+
+func newEd25519SigningPeer(t testing.TB, private ed25519.PrivateKey) (*PrivateKey, *signaturePeer) {
+	t.Helper()
+	raw := &signaturePeer{
+		t: t, reference: protocol.DigitalSignature, algorithm: protocol.Ed25519,
+		ed: private, closed: make(chan struct{}),
+		authenticationReference: protocol.ApplicationPIN,
+		authenticationData:      []byte{'1', '2', '3', '4', '5', '6', 0xff, 0xff},
+	}
+	device := New(raw)
+
+	t.Cleanup(func() { _ = device.Close() })
+
+	key, err := device.PrivateKey(protocol.DigitalSignature, private.Public())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,27 +338,54 @@ func (p *signaturePeer) Exchange(ctx context.Context, command iso7816.Command) (
 		return iso7816.Response{}, io.ErrUnexpectedEOF
 	}
 
-	var prefix []byte
-	if p.rsa != nil {
-		// Independent RSA-2048 wire oracle: 7C {82 empty, 81 256-byte EM}.
-		prefix = []byte{0x7c, 0x82, 1, 6, 0x82, 0, 0x81, 0x82, 1, 0}
+	var input []byte
+
+	if p.ed != nil || (p.ec != nil && p.ec.Curve == elliptic.P521()) {
+		tag, value, rest, err := bertlv.Parse(command.Data)
+		if err != nil || tag != 0x7c || len(rest) != 0 {
+			p.t.Errorf("invalid signing template: %x, %v", command.Data, err)
+			return iso7816.Response{}, io.ErrUnexpectedEOF
+		}
+
+		tag, response, remaining, err := bertlv.Parse(value)
+		if err != nil || tag != 0x82 || len(response) != 0 {
+			p.t.Errorf("invalid signing response request: %x, %v", value, err)
+			return iso7816.Response{}, io.ErrUnexpectedEOF
+		}
+
+		tag, input, rest, err = bertlv.Parse(remaining)
+		if err != nil || tag != 0x81 || len(rest) != 0 {
+			p.t.Errorf("invalid signing challenge: %x, %v", remaining, err)
+			return iso7816.Response{}, io.ErrUnexpectedEOF
+		}
 	} else {
-		width := p.ec.Curve.Params().BitSize / 8
-		prefix = []byte{0x7c, byte(width + 4), 0x82, 0, 0x81, byte(width)}
+		var prefix []byte
+		if p.rsa != nil {
+			// Independent RSA-2048 wire oracle: 7C {82 empty, 81 256-byte EM}.
+			prefix = []byte{0x7c, 0x82, 1, 6, 0x82, 0, 0x81, 0x82, 1, 0}
+			if p.rsa.Size() == 512 {
+				// RSA-4096 uses a 512-byte EM.
+				prefix = []byte{0x7c, 0x82, 2, 6, 0x82, 0, 0x81, 0x82, 2, 0}
+			}
+		} else {
+			width := p.ec.Curve.Params().BitSize / 8
+			prefix = []byte{0x7c, byte(width + 4), 0x82, 0, 0x81, byte(width)}
+		}
+
+		if !bytes.HasPrefix(command.Data, prefix) {
+			p.t.Errorf("signing input prefix = %x, want %x", command.Data, prefix)
+			return iso7816.Response{}, io.ErrUnexpectedEOF
+		}
+
+		input = command.Data[len(prefix):]
 	}
 
-	if !bytes.HasPrefix(command.Data, prefix) {
-		p.t.Errorf("signing input prefix = %x, want %x", command.Data, prefix)
-		return iso7816.Response{}, io.ErrUnexpectedEOF
-	}
-
-	input := command.Data[len(prefix):]
 	if p.rsa != nil && len(input) != p.rsa.Size() {
 		p.t.Errorf("RSA input length = %d, want %d", len(input), p.rsa.Size())
 		return iso7816.Response{}, io.ErrUnexpectedEOF
 	}
 
-	if p.ec != nil && len(input) != p.ec.Curve.Params().BitSize/8 {
+	if p.ec != nil && p.ec.Curve != elliptic.P521() && len(input) != p.ec.Curve.Params().BitSize/8 {
 		p.t.Errorf("ECDSA input length = %d, want %d", len(input), p.ec.Curve.Params().BitSize/8)
 		return iso7816.Response{}, io.ErrUnexpectedEOF
 	}
@@ -281,6 +401,8 @@ func (p *signaturePeer) Exchange(ctx context.Context, command iso7816.Command) (
 	if p.rsa != nil {
 		// This is the token's raw RSA primitive, not the host EMSA encoder.
 		signature = new(big.Int).Exp(new(big.Int).SetBytes(input), p.rsa.D, p.rsa.N).FillBytes(make([]byte, p.rsa.Size()))
+	} else if p.ed != nil {
+		signature = ed25519.Sign(p.ed, input)
 	} else {
 		var err error
 
