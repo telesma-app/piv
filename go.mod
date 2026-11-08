@@ -1,6 +1,6 @@
 module github.com/telesma-app/piv
 
-go 1.26.0
+go 1.27.3
 
 require (
 	github.com/telesma-app/iso7816 v0.4.0
