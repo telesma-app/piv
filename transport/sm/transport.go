@@ -3,7 +3,6 @@ package sm
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"sync"
 
@@ -11,18 +10,6 @@ import (
 	"github.com/telesma-app/piv/protocol"
 	"github.com/telesma-app/piv/transport"
 )
-
-// Parameters supplies explicit card trust, cipher suite and protected APDU encoding.
-// HostID is a locally assigned client identifier; zero is permitted by NIST.
-// CipherSuite must be protocol.CipherSuite2 or protocol.CipherSuite7.
-// Encoding must be EncodingShort (with chaining) or EncodingExtended. Handshake
-// commands use short encoding. No suite or encoding fallback is performed.
-type Parameters struct {
-	Trust       Trust
-	CipherSuite protocol.Algorithm
-	HostID      [8]byte
-	Encoding    iso7816.Encoding
-}
 
 // Transport owns a CS2 or CS7 session and its connection. Create it with Open
 // and stop using the underlying connection independently. A Transport must not be copied.
@@ -40,46 +27,6 @@ type Transport struct {
 
 var _ transport.Device = (*Transport)(nil)
 
-// Open reselects PIV, requires support for the requested suite, and authenticates
-// a fresh session against parameters.Trust. The caller serializes initialization with
-// all other connection users. Ownership transfers only on success. On failure
-// the caller retains ownership; a DeviceInvalidatedError additionally means the
-// connection has been closed and must not be reused.
-func Open(ctx context.Context, connection transport.Device, parameters Parameters) (*Transport, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-
-	if parameters.Encoding != iso7816.EncodingShort && parameters.Encoding != iso7816.EncodingExtended {
-		return nil, fmt.Errorf("sm: select short or extended APDU encoding explicitly")
-	}
-
-	suite, err := selectCipherSuite(parameters.CipherSuite)
-	if err != nil {
-		return nil, err
-	}
-
-	keys, application, certificate, err := establish(ctx, connection, parameters, suite)
-	if err != nil {
-		var invalidated *transport.DeviceInvalidatedError
-		if errors.As(err, &invalidated) {
-			return nil, errors.Join(err, connection.Close())
-		}
-
-		return nil, err
-	}
-	defer keys.clear()
-
-	return &Transport{
-		connection:  connection,
-		application: application,
-		certificate: certificate,
-		session:     newRecordSession(keys, parameters.Encoding),
-		mu:          make(chan struct{}, 1),
-		closed:      make(chan struct{}),
-	}, nil
-}
-
 // ApplicationProperties returns the SELECT result used to establish this
 // channel without I/O. Its slices are read-only and remain available after Close.
 func (t *Transport) ApplicationProperties() protocol.ApplicationPropertyTemplate {
@@ -91,10 +38,6 @@ func (t *Transport) ApplicationProperties() protocol.ApplicationPropertyTemplate
 // response buffers and remains available after Close.
 func (t *Transport) CardCertificate() CardCertificate {
 	return t.certificate
-}
-
-func invalidHandshake(err error) error {
-	return &transport.DeviceInvalidatedError{Err: err}
 }
 
 // PIVSecureMessaging reports whether this NIST secure messaging transport is

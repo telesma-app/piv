@@ -13,6 +13,8 @@ import (
 	"github.com/telesma-app/piv/transport"
 )
 
+// Certificate objects: SP 800-73-5 Part 1, Sections 3.1.3-3.1.4, 3.2, 3.3.4.
+
 // Certificate is the result of reading one standard PIV certificate slot.
 // Key is set even when reading fails. DER contains the decoded certificate
 // bytes when object decoding succeeds; Certificate is nil if X.509 parsing
@@ -24,6 +26,46 @@ type Certificate struct {
 	DER         []byte
 	MSCUID      []byte
 	Certificate *x509.Certificate
+}
+
+// GetCertificate reads a slot's X.509 certificate. Parsing does not verify its
+// signature or establish trust.
+func (d *Device) GetCertificate(ctx context.Context, key protocol.KeyReference) (*x509.Certificate, error) {
+	if err := d.lock(ctx); err != nil {
+		return nil, err
+	}
+	defer d.unlock()
+
+	certificate, err := d.client.GetCertificate(ctx, key)
+
+	return certificate, d.operationError(err)
+}
+
+// GetCertificateDER reads and decompresses a slot's certificate without parsing
+// or validating its DER contents. It can export certificates unsupported by the
+// X.509 parser.
+func (d *Device) GetCertificateDER(ctx context.Context, key protocol.KeyReference) ([]byte, error) {
+	if err := d.lock(ctx); err != nil {
+		return nil, err
+	}
+	defer d.unlock()
+
+	der, err := d.client.GetCertificateDER(ctx, key)
+
+	return der, d.operationError(err)
+}
+
+// GetCertificateData reads the decoded certificate bytes and optional legacy
+// MSCUID from a slot's certificate object without X.509 parsing or verification.
+func (d *Device) GetCertificateData(ctx context.Context, key protocol.KeyReference) (protocol.CertificateData, error) {
+	if err := d.lock(ctx); err != nil {
+		return protocol.CertificateData{}, err
+	}
+	defer d.unlock()
+
+	certificate, err := d.client.GetCertificateData(ctx, key)
+
+	return certificate, d.operationError(err)
 }
 
 // Certificates reads the four primary slots in order 9A, 9C, 9D, 9E, followed by

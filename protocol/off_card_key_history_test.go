@@ -3,6 +3,7 @@ package protocol
 import (
 	"bytes"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -76,6 +77,44 @@ func TestParseOffCardCertURLRejectsInvalidData(t *testing.T) {
 				t.Errorf("ParseOffCardCertURL = %x, %v, want ErrInvalidResponse", got, err)
 			}
 		})
+	}
+}
+
+func TestEncodeOffCardKeyHistoryFile(t *testing.T) {
+	certificates := []OffCardCertificate{
+		{Key: RetiredKey20, DER: []byte{0x30, 3, 2, 1, 1}},
+		{Key: RetiredKey1, DER: []byte{0x30, 0}},
+	}
+	want := []byte{
+		0x30, 17,
+		0x30, 8, 4, 1, 0x95, 0x30, 3, 2, 1, 1,
+		0x30, 5, 4, 1, 0x82, 0x30, 0,
+	}
+
+	got := EncodeOffCardKeyHistoryFile(certificates)
+	if !bytes.Equal(got, want) {
+		t.Errorf("EncodeOffCardKeyHistoryFile = %x, want %x", got, want)
+	}
+
+	parsed, err := ParseOffCardKeyHistoryFile(got)
+	if err != nil || !reflect.DeepEqual(parsed, certificates) {
+		t.Errorf("certificates = %+v, %v, want %+v", parsed, err, certificates)
+	}
+}
+
+func TestEncodeOffCardKeyHistoryFileLongDER(t *testing.T) {
+	der := certificateDER(t)
+	certificates := []OffCardCertificate{{Key: RetiredKey1, DER: der}}
+
+	data := EncodeOffCardKeyHistoryFile(certificates)
+
+	got, err := ParseOffCardKeyHistoryFile(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(got, certificates) {
+		t.Errorf("certificates = %+v, want %+v", got, certificates)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -15,6 +16,59 @@ import (
 	"github.com/telesma-app/piv/transport"
 )
 
+// Parameters supplies explicit card trust, cipher suite and protected APDU encoding.
+// HostID is a locally assigned client identifier; zero is permitted by NIST.
+// CipherSuite must be protocol.CipherSuite2 or protocol.CipherSuite7.
+// Encoding must be EncodingShort (with chaining) or EncodingExtended. Handshake
+// commands use short encoding. No suite or encoding fallback is performed.
+type Parameters struct {
+	Trust       Trust
+	CipherSuite protocol.Algorithm
+	HostID      [8]byte
+	Encoding    iso7816.Encoding
+}
+
+// Open reselects PIV, requires support for the requested suite, and authenticates
+// a fresh session against parameters.Trust. The caller serializes initialization with
+// all other connection users. Ownership transfers only on success. On failure
+// the caller retains ownership; a DeviceInvalidatedError additionally means the
+// connection has been closed and must not be reused.
+func Open(ctx context.Context, connection transport.Device, parameters Parameters) (*Transport, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	if parameters.Encoding != iso7816.EncodingShort && parameters.Encoding != iso7816.EncodingExtended {
+		return nil, fmt.Errorf("sm: select short or extended APDU encoding explicitly")
+	}
+
+	suite, err := selectCipherSuite(parameters.CipherSuite)
+	if err != nil {
+		return nil, err
+	}
+
+	keys, application, certificate, err := establish(ctx, connection, parameters, suite)
+	if err != nil {
+		var invalidated *transport.DeviceInvalidatedError
+		if errors.As(err, &invalidated) {
+			return nil, errors.Join(err, connection.Close())
+		}
+
+		return nil, err
+	}
+	defer keys.clear()
+
+	return &Transport{
+		connection:  connection,
+		application: application,
+		certificate: certificate,
+		session:     newRecordSession(keys, parameters.Encoding),
+		mu:          make(chan struct{}, 1),
+		closed:      make(chan struct{}),
+	}, nil
+}
+
+// establish follows the client application steps in SP 800-73-5 Part 2, Section 4.1.1.
 func establish(ctx context.Context, connection transport.Device, parameters Parameters, suite cipherSuite) (sessionKeys, protocol.ApplicationPropertyTemplate, CardCertificate, error) {
 	response, err := connection.Exchange(ctx, protocol.SelectCommand())
 	if err != nil {
@@ -91,6 +145,7 @@ func establish(ctx context.Context, connection transport.Device, parameters Para
 	return keys, application, peer, nil
 }
 
+// establishmentCommand encodes the key establishment command from Section 4.1.8.
 func establishmentCommand(suite cipherSuite, hostID [8]byte, public []byte) iso7816.Command {
 	challenge := append([]byte{0}, hostID[:]...)
 	challenge = append(challenge, public...)
@@ -124,4 +179,8 @@ func parseEstablishmentResponse(suite cipherSuite, data []byte) (nonce, cryptogr
 	}
 
 	return value[1 : 1+suite.nonceSize], value[1+suite.nonceSize : certificateOffset], value[certificateOffset:], nil
+}
+
+func invalidHandshake(err error) error {
+	return &transport.DeviceInvalidatedError{Err: err}
 }

@@ -6,3 +6,7 @@
 // objects and off-card certificate files does not establish their trust.
 // The credential package verifies signed objects against explicit trust anchors.
 package protocol
+
+import "errors"
+
+var ErrInvalidResponse = errors.New("piv: invalid response")

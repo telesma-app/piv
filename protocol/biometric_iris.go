@@ -56,6 +56,52 @@ type BiometricQuality struct {
 	Algorithm uint16
 }
 
+// EncodeIrisImageRecord encodes ISO/IEC 19794-6:2011 metadata and opaque image
+// bytes, without CBEFF or BC wrappers. Field values and counts must follow the
+// standard's widths and the caller's PIV profile; encoding does not compress.
+func EncodeIrisImageRecord(record IrisImageRecord) []byte {
+	data := make([]byte, 16)
+	copy(data, "IIR\x00020\x00")
+	binary.BigEndian.PutUint16(data[12:14], uint16(len(record.Representations)))
+
+	data[15] = record.NumberOfEyes
+	for _, iris := range record.Representations {
+		data = binary.BigEndian.AppendUint32(data, uint32(52+5*len(iris.Quality)+len(iris.Image)))
+		data = append(data, iris.CaptureDate[:]...)
+		data = append(data, iris.CaptureTechnology)
+		data = binary.BigEndian.AppendUint16(data, iris.CaptureVendor)
+		data = binary.BigEndian.AppendUint16(data, iris.CaptureType)
+
+		data = append(data, byte(len(iris.Quality)))
+		for _, quality := range iris.Quality {
+			data = append(data, quality.Score)
+			data = binary.BigEndian.AppendUint16(data, quality.Vendor)
+			data = binary.BigEndian.AppendUint16(data, quality.Algorithm)
+		}
+
+		data = binary.BigEndian.AppendUint16(data, iris.Number)
+		data = append(data, iris.Eye, iris.ImageType, iris.ImageFormat, iris.ImageProperties)
+		data = binary.BigEndian.AppendUint16(data, iris.Width)
+		data = binary.BigEndian.AppendUint16(data, iris.Height)
+		data = append(data, iris.BitDepth)
+		data = binary.BigEndian.AppendUint16(data, iris.Range)
+		data = binary.BigEndian.AppendUint16(data, iris.RollAngle)
+		data = binary.BigEndian.AppendUint16(data, iris.RollUncertainty)
+		data = binary.BigEndian.AppendUint16(data, iris.CenterXMinimum)
+		data = binary.BigEndian.AppendUint16(data, iris.CenterXMaximum)
+		data = binary.BigEndian.AppendUint16(data, iris.CenterYMinimum)
+		data = binary.BigEndian.AppendUint16(data, iris.CenterYMaximum)
+		data = binary.BigEndian.AppendUint16(data, iris.DiameterMinimum)
+		data = binary.BigEndian.AppendUint16(data, iris.DiameterMaximum)
+		data = binary.BigEndian.AppendUint32(data, uint32(len(iris.Image)))
+		data = append(data, iris.Image...)
+	}
+
+	binary.BigEndian.PutUint32(data[8:12], uint32(len(data)))
+
+	return data
+}
+
 // ParseIrisImageRecord parses an unencrypted ISO/IEC 19794-6:2011 record from
 // BiometricData.Record. Record, representation, quality and image lengths must
 // agree exactly. The opaque image payload is not decoded or matched. It accepts
@@ -125,50 +171,4 @@ func ParseIrisImageRecord(data []byte) (IrisImageRecord, error) {
 	}
 
 	return result, nil
-}
-
-// EncodeIrisImageRecord encodes ISO/IEC 19794-6:2011 metadata and opaque image
-// bytes, without CBEFF or BC wrappers. Field values and counts must follow the
-// standard's widths and the caller's PIV profile; encoding does not compress.
-func EncodeIrisImageRecord(record IrisImageRecord) []byte {
-	data := make([]byte, 16)
-	copy(data, "IIR\x00020\x00")
-	binary.BigEndian.PutUint16(data[12:14], uint16(len(record.Representations)))
-
-	data[15] = record.NumberOfEyes
-	for _, iris := range record.Representations {
-		data = binary.BigEndian.AppendUint32(data, uint32(52+5*len(iris.Quality)+len(iris.Image)))
-		data = append(data, iris.CaptureDate[:]...)
-		data = append(data, iris.CaptureTechnology)
-		data = binary.BigEndian.AppendUint16(data, iris.CaptureVendor)
-		data = binary.BigEndian.AppendUint16(data, iris.CaptureType)
-
-		data = append(data, byte(len(iris.Quality)))
-		for _, quality := range iris.Quality {
-			data = append(data, quality.Score)
-			data = binary.BigEndian.AppendUint16(data, quality.Vendor)
-			data = binary.BigEndian.AppendUint16(data, quality.Algorithm)
-		}
-
-		data = binary.BigEndian.AppendUint16(data, iris.Number)
-		data = append(data, iris.Eye, iris.ImageType, iris.ImageFormat, iris.ImageProperties)
-		data = binary.BigEndian.AppendUint16(data, iris.Width)
-		data = binary.BigEndian.AppendUint16(data, iris.Height)
-		data = append(data, iris.BitDepth)
-		data = binary.BigEndian.AppendUint16(data, iris.Range)
-		data = binary.BigEndian.AppendUint16(data, iris.RollAngle)
-		data = binary.BigEndian.AppendUint16(data, iris.RollUncertainty)
-		data = binary.BigEndian.AppendUint16(data, iris.CenterXMinimum)
-		data = binary.BigEndian.AppendUint16(data, iris.CenterXMaximum)
-		data = binary.BigEndian.AppendUint16(data, iris.CenterYMinimum)
-		data = binary.BigEndian.AppendUint16(data, iris.CenterYMaximum)
-		data = binary.BigEndian.AppendUint16(data, iris.DiameterMinimum)
-		data = binary.BigEndian.AppendUint16(data, iris.DiameterMaximum)
-		data = binary.BigEndian.AppendUint32(data, uint32(len(iris.Image)))
-		data = append(data, iris.Image...)
-	}
-
-	binary.BigEndian.PutUint32(data[8:12], uint32(len(data)))
-
-	return data
 }

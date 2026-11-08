@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/telesma-app/bertlv"
@@ -20,6 +21,28 @@ type PrintedInfo struct {
 	IssuerIdentification         string
 	OrganizationAffiliationLine1 *string
 	OrganizationAffiliationLine2 *string
+}
+
+// EncodePrintedInformation encodes Printed Information without the outer 53
+// template, for PutData (SP 800-73-5 Part 1, Table 15). The caller supplies
+// ASCII text within the field lengths accepted by ParsePrintedInformation.
+// The expiration date follows PrintedInfo's calendar-date contract.
+func EncodePrintedInformation(info PrintedInfo) []byte {
+	data := bertlv.Append(nil, 0x01, []byte(info.Name))
+	data = bertlv.Append(data, 0x02, []byte(info.EmployeeAffiliation))
+	data = bertlv.Append(data, 0x04, []byte(strings.ToUpper(info.ExpirationDate.Format("2006Jan02"))))
+	data = bertlv.Append(data, 0x05, []byte(info.AgencyCardSerialNumber))
+
+	data = bertlv.Append(data, 0x06, []byte(info.IssuerIdentification))
+	if info.OrganizationAffiliationLine1 != nil {
+		data = bertlv.Append(data, 0x07, []byte(*info.OrganizationAffiliationLine1))
+	}
+
+	if info.OrganizationAffiliationLine2 != nil {
+		data = bertlv.Append(data, 0x08, []byte(*info.OrganizationAffiliationLine2))
+	}
+
+	return append(data, 0xfe, 0)
 }
 
 // ParsePrintedInformation parses the object's content without its outer 53

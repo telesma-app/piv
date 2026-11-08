@@ -6,56 +6,32 @@ import (
 	"fmt"
 	"net"
 	"strings"
+
+	"github.com/telesma-app/bertlv"
 )
-
-// ParseOffCardCertURL extracts the SHA-256 digest from the Key History object's
-// offCardCertURL (SP 800-73-5 Part 1, Sec. 3.3.3 and Table 20). The URL must be
-// http://<DNS name>/<64 ASCII hexadecimal digits>, within the field's 118-byte
-// limit. This does not authenticate the URL or retrieve its contents.
-func ParseOffCardCertURL(value string) ([32]byte, error) {
-	var digest [32]byte
-
-	scheme, address, ok := strings.Cut(value, "://")
-	if !ok || !strings.EqualFold(scheme, "http") || len(value) > 118 {
-		return digest, fmt.Errorf("%w: invalid off-card certificate URL", ErrInvalidResponse)
-	}
-
-	host, encoded, ok := strings.Cut(address, "/")
-	if !ok || host == "" || len(encoded) != hex.EncodedLen(len(digest)) {
-		return digest, fmt.Errorf("%w: invalid off-card certificate URL", ErrInvalidResponse)
-	}
-
-	name := strings.TrimSuffix(host, ".")
-	if net.ParseIP(name) != nil {
-		return digest, fmt.Errorf("%w: off-card certificate URL requires a DNS name", ErrInvalidResponse)
-	}
-
-	for label := range strings.SplitSeq(name, ".") {
-		if len(label) == 0 || label[0] == '-' || label[len(label)-1] == '-' {
-			return digest, fmt.Errorf("%w: invalid off-card certificate DNS name", ErrInvalidResponse)
-		}
-
-		for _, b := range []byte(label) {
-			if b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '-' {
-				continue
-			}
-
-			return digest, fmt.Errorf("%w: invalid off-card certificate DNS name", ErrInvalidResponse)
-		}
-	}
-
-	if _, err := hex.Decode(digest[:], []byte(encoded)); err != nil {
-		return [32]byte{}, fmt.Errorf("%w: invalid off-card certificate SHA-256 digest: %v", ErrInvalidResponse, err)
-	}
-
-	return digest, nil
-}
 
 // OffCardCertificate associates a retired key reference with its certificate.
 // DER contains the complete certificate SEQUENCE and borrows the parsed file.
 type OffCardCertificate struct {
 	Key KeyReference
 	DER []byte
+}
+
+// EncodeOffCardKeyHistoryFile encodes the DER file described in SP 800-73-5
+// Part 1, Sec. 3.3.3. Entries retain their order. The caller supplies one to
+// twenty entries with distinct retired key references and complete certificate
+// DER SEQUENCEs, as returned by ParseOffCardKeyHistoryFile. Certificate bytes
+// are preserved without parsing or checking their signatures.
+func EncodeOffCardKeyHistoryFile(certificates []OffCardCertificate) []byte {
+	var data []byte
+
+	for _, certificate := range certificates {
+		entry := []byte{0x04, 1, byte(certificate.Key)}
+		entry = append(entry, certificate.DER...)
+		data = bertlv.Append(data, 0x30, entry)
+	}
+
+	return bertlv.Append(nil, 0x30, data)
 }
 
 // ParseOffCardKeyHistoryFile parses the DER file identified by OffCardCertURL
@@ -128,6 +104,49 @@ func ParseOffCardKeyHistoryFile(data []byte) ([]OffCardCertificate, error) {
 	}
 
 	return certificates, nil
+}
+
+// ParseOffCardCertURL extracts the SHA-256 digest from the Key History object's
+// offCardCertURL (SP 800-73-5 Part 1, Sec. 3.3.3 and Table 20). The URL must be
+// http://<DNS name>/<64 ASCII hexadecimal digits>, within the field's 118-byte
+// limit. This does not authenticate the URL or retrieve its contents.
+func ParseOffCardCertURL(value string) ([32]byte, error) {
+	var digest [32]byte
+
+	scheme, address, ok := strings.Cut(value, "://")
+	if !ok || !strings.EqualFold(scheme, "http") || len(value) > 118 {
+		return digest, fmt.Errorf("%w: invalid off-card certificate URL", ErrInvalidResponse)
+	}
+
+	host, encoded, ok := strings.Cut(address, "/")
+	if !ok || host == "" || len(encoded) != hex.EncodedLen(len(digest)) {
+		return digest, fmt.Errorf("%w: invalid off-card certificate URL", ErrInvalidResponse)
+	}
+
+	name := strings.TrimSuffix(host, ".")
+	if net.ParseIP(name) != nil {
+		return digest, fmt.Errorf("%w: off-card certificate URL requires a DNS name", ErrInvalidResponse)
+	}
+
+	for label := range strings.SplitSeq(name, ".") {
+		if len(label) == 0 || label[0] == '-' || label[len(label)-1] == '-' {
+			return digest, fmt.Errorf("%w: invalid off-card certificate DNS name", ErrInvalidResponse)
+		}
+
+		for _, b := range []byte(label) {
+			if b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '-' {
+				continue
+			}
+
+			return digest, fmt.Errorf("%w: invalid off-card certificate DNS name", ErrInvalidResponse)
+		}
+	}
+
+	if _, err := hex.Decode(digest[:], []byte(encoded)); err != nil {
+		return [32]byte{}, fmt.Errorf("%w: invalid off-card certificate SHA-256 digest: %v", ErrInvalidResponse, err)
+	}
+
+	return digest, nil
 }
 
 func offCardSequence(data []byte) (asn1.RawValue, []byte, error) {

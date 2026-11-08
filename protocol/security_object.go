@@ -11,98 +11,6 @@ import (
 	"github.com/telesma-app/bertlv"
 )
 
-// ContainerID identifies a PIV data-model container, not a GET DATA tag
-// (SP 800-73-5 Part 1, Table 2).
-type ContainerID uint16
-
-// ContainerIDForObject translates a GET DATA tag to its data-model container.
-func ContainerIDForObject(object Object) (ContainerID, error) {
-	switch object {
-	case CardCapabilityContainer:
-		return 0xdb00, nil
-	case CardholderUniqueIdentifier:
-		return 0x3000, nil
-	case PIVAuthenticationCertificate:
-		return 0x0101, nil
-	case CardholderFingerprints:
-		return 0x6010, nil
-	case SecurityObject:
-		return 0x9000, nil
-	case CardholderFacialImage:
-		return 0x6030, nil
-	case CardAuthenticationCertificate:
-		return 0x0500, nil
-	case DigitalSignatureCertificate:
-		return 0x0100, nil
-	case KeyManagementCertificate:
-		return 0x0102, nil
-	case PrintedInformation:
-		return 0x3001, nil
-	case DiscoveryObject:
-		return 0x6050, nil
-	case KeyHistoryObject:
-		return 0x6060, nil
-	case CardholderIrisImages:
-		return 0x1015, nil
-	case BiometricInformationTemplates:
-		return 0x1016, nil
-	case SecureMessagingCertificateSignerObject:
-		return 0x1017, nil
-	case PairingCodeReferenceDataContainer:
-		return 0x1018, nil
-	default:
-		if object >= RetiredCertificate1 && object <= RetiredCertificate20 {
-			return 0x1001 + ContainerID(object-RetiredCertificate1), nil
-		}
-
-		return 0, fmt.Errorf("piv: object %x has no standard container ID", uint32(object))
-	}
-}
-
-// ObjectForContainerID translates a data-model container to a GET DATA tag.
-func ObjectForContainerID(container ContainerID) (Object, error) {
-	switch container {
-	case 0xdb00:
-		return CardCapabilityContainer, nil
-	case 0x3000:
-		return CardholderUniqueIdentifier, nil
-	case 0x0101:
-		return PIVAuthenticationCertificate, nil
-	case 0x6010:
-		return CardholderFingerprints, nil
-	case 0x9000:
-		return SecurityObject, nil
-	case 0x6030:
-		return CardholderFacialImage, nil
-	case 0x0500:
-		return CardAuthenticationCertificate, nil
-	case 0x0100:
-		return DigitalSignatureCertificate, nil
-	case 0x0102:
-		return KeyManagementCertificate, nil
-	case 0x3001:
-		return PrintedInformation, nil
-	case 0x6050:
-		return DiscoveryObject, nil
-	case 0x6060:
-		return KeyHistoryObject, nil
-	case 0x1015:
-		return CardholderIrisImages, nil
-	case 0x1016:
-		return BiometricInformationTemplates, nil
-	case 0x1017:
-		return SecureMessagingCertificateSignerObject, nil
-	case 0x1018:
-		return PairingCodeReferenceDataContainer, nil
-	default:
-		if container >= 0x1001 && container <= 0x1014 {
-			return RetiredCertificate1 + Object(container-0x1001), nil
-		}
-
-		return 0, fmt.Errorf("piv: container %04x has no standard object tag", uint16(container))
-	}
-}
-
 // DataGroupMapping associates an ICAO data group with a PIV container.
 type DataGroupMapping struct {
 	DataGroup   uint8
@@ -219,18 +127,6 @@ type LDSSecurityObject struct {
 	VersionInfo   *LDSVersionInfo
 }
 
-type ldsDataGroupHash struct {
-	DataGroup int
-	Digest    []byte
-}
-
-type ldsSecurityObject struct {
-	Version       int
-	HashAlgorithm pkix.AlgorithmIdentifier
-	Hashes        []ldsDataGroupHash
-	VersionInfo   asn1.RawValue `asn1:"optional"`
-}
-
 // EncodeLDSSecurityObject DER-encodes a digest list for CMS signing. A non-nil
 // VersionInfo selects version 1; otherwise version 0 is encoded.
 func EncodeLDSSecurityObject(object LDSSecurityObject) ([]byte, error) {
@@ -321,4 +217,16 @@ func ParseLDSSecurityObject(data []byte) (LDSSecurityObject, error) {
 	}
 
 	return object, nil
+}
+
+type ldsDataGroupHash struct {
+	DataGroup int
+	Digest    []byte
+}
+
+type ldsSecurityObject struct {
+	Version       int
+	HashAlgorithm pkix.AlgorithmIdentifier
+	Hashes        []ldsDataGroupHash
+	VersionInfo   asn1.RawValue `asn1:"optional"`
 }

@@ -1,5 +1,9 @@
 package protocol
 
+import (
+	"github.com/telesma-app/bertlv"
+)
+
 // SecureMessagingCertificateSigner contains the Secure Messaging Certificate Signer data
 // object (SP 800-73-5 Part 1, Sec. 3.3.7 and Table 43). CertificateDER contains
 // the decoded X.509 certificate bytes. IntermediateCVC is nil when absent;
@@ -9,6 +13,19 @@ package protocol
 type SecureMessagingCertificateSigner struct {
 	CertificateDER  []byte
 	IntermediateCVC []byte
+}
+
+// EncodeSecureMessagingCertificateSigner encodes an uncompressed Secure
+// Messaging Certificate Signer object without the outer 53 template, for
+// PutData (SP 800-73-5 Part 1, Table 43). IntermediateCVC, when present, is
+// appended with its exact tag and length encoding. It does not create or
+// validate either certificate's signature.
+func EncodeSecureMessagingCertificateSigner(signer SecureMessagingCertificateSigner) []byte {
+	data := bertlv.Append(nil, 0x70, signer.CertificateDER)
+	data = append(data, 0x71, 1, 0)
+	data = append(data, signer.IntermediateCVC...)
+
+	return append(data, 0xfe, 0)
 }
 
 // ParseSecureMessagingCertificateSigner parses the object's content without

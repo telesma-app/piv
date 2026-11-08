@@ -46,6 +46,46 @@ type FacialFeaturePoint struct {
 	X, Y         uint16
 }
 
+// EncodeFacialImageRecord encodes the known INCITS 385-2004 fields without
+// CBEFF or BC wrappers. It preserves compressed Image bytes; all field values
+// and counts must fit the standard's widths and follow the caller's PIV profile.
+func EncodeFacialImageRecord(record FacialImageRecord) []byte {
+	data := make([]byte, 14)
+	copy(data, "FAC\x00010\x00")
+	binary.BigEndian.PutUint16(data[12:14], uint16(len(record.Images)))
+
+	for _, face := range record.Images {
+		block := make([]byte, 20)
+		binary.BigEndian.PutUint32(block[:4], uint32(32+8*len(face.FeaturePoints)+len(face.Image)))
+		binary.BigEndian.PutUint16(block[4:6], uint16(len(face.FeaturePoints)))
+		block[6], block[7], block[8] = face.Gender, face.EyeColor, face.HairColor
+		block[9], block[10], block[11] = byte(face.FeatureMask>>16), byte(face.FeatureMask>>8), byte(face.FeatureMask)
+		binary.BigEndian.PutUint16(block[12:14], face.Expression)
+		copy(block[14:17], face.PoseAngles[:])
+		copy(block[17:20], face.PoseUncertainty[:])
+
+		data = append(data, block...)
+		for _, point := range face.FeaturePoints {
+			data = append(data, point.Type, point.Major<<4|point.Minor)
+			data = binary.BigEndian.AppendUint16(data, point.X)
+			data = binary.BigEndian.AppendUint16(data, point.Y)
+			data = append(data, 0, 0)
+		}
+
+		data = append(data, face.ImageType, face.ImageDataType)
+		data = binary.BigEndian.AppendUint16(data, face.Width)
+		data = binary.BigEndian.AppendUint16(data, face.Height)
+		data = append(data, face.ColorSpace, face.SourceType)
+		data = binary.BigEndian.AppendUint16(data, face.DeviceType)
+		data = binary.BigEndian.AppendUint16(data, face.Quality)
+		data = append(data, face.Image...)
+	}
+
+	binary.BigEndian.PutUint32(data[8:12], uint32(len(data)))
+
+	return data
+}
+
 // ParseFacialImageRecord parses an unencrypted INCITS 385-2004 record from
 // BiometricData.Record. It checks framing, sizes, and reserved fields, without
 // claiming that the image meets photographic capture or compression policy.
@@ -112,44 +152,4 @@ func ParseFacialImageRecord(data []byte) (FacialImageRecord, error) {
 	}
 
 	return result, nil
-}
-
-// EncodeFacialImageRecord encodes the known INCITS 385-2004 fields without
-// CBEFF or BC wrappers. It preserves compressed Image bytes; all field values
-// and counts must fit the standard's widths and follow the caller's PIV profile.
-func EncodeFacialImageRecord(record FacialImageRecord) []byte {
-	data := make([]byte, 14)
-	copy(data, "FAC\x00010\x00")
-	binary.BigEndian.PutUint16(data[12:14], uint16(len(record.Images)))
-
-	for _, face := range record.Images {
-		block := make([]byte, 20)
-		binary.BigEndian.PutUint32(block[:4], uint32(32+8*len(face.FeaturePoints)+len(face.Image)))
-		binary.BigEndian.PutUint16(block[4:6], uint16(len(face.FeaturePoints)))
-		block[6], block[7], block[8] = face.Gender, face.EyeColor, face.HairColor
-		block[9], block[10], block[11] = byte(face.FeatureMask>>16), byte(face.FeatureMask>>8), byte(face.FeatureMask)
-		binary.BigEndian.PutUint16(block[12:14], face.Expression)
-		copy(block[14:17], face.PoseAngles[:])
-		copy(block[17:20], face.PoseUncertainty[:])
-
-		data = append(data, block...)
-		for _, point := range face.FeaturePoints {
-			data = append(data, point.Type, point.Major<<4|point.Minor)
-			data = binary.BigEndian.AppendUint16(data, point.X)
-			data = binary.BigEndian.AppendUint16(data, point.Y)
-			data = append(data, 0, 0)
-		}
-
-		data = append(data, face.ImageType, face.ImageDataType)
-		data = binary.BigEndian.AppendUint16(data, face.Width)
-		data = binary.BigEndian.AppendUint16(data, face.Height)
-		data = append(data, face.ColorSpace, face.SourceType)
-		data = binary.BigEndian.AppendUint16(data, face.DeviceType)
-		data = binary.BigEndian.AppendUint16(data, face.Quality)
-		data = append(data, face.Image...)
-	}
-
-	binary.BigEndian.PutUint32(data[8:12], uint32(len(data)))
-
-	return data
 }

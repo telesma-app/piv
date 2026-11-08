@@ -22,6 +22,15 @@ const (
 	FingerLeftLittle
 )
 
+// MinutiaType identifies the two-bit ridge feature in fingerprint formats.
+type MinutiaType byte
+
+const (
+	MinutiaOther       MinutiaType = 0
+	MinutiaRidgeEnding MinutiaType = 1
+	MinutiaBifurcation MinutiaType = 2
+)
+
 // FingerprintRecord is an INCITS 378-2004 PIV fingerprint template, carried
 // in BiometricData.Record (SP 800-76-2, Table 6). Dimensions are pixels;
 // resolutions are pixels per centimeter. CaptureEquipment includes the
@@ -59,6 +68,37 @@ type FingerprintMinutia struct {
 	Type    MinutiaType
 	Angle   byte
 	Quality byte
+}
+
+// EncodeFingerprintRecord encodes an INCITS 378-2004 record without the
+// CBEFF or BC wrapper. Views and minutiae must follow the PIV profile's sizes
+// and ranges; no extended data are generated.
+func EncodeFingerprintRecord(record FingerprintRecord) []byte {
+	data := make([]byte, 26)
+	copy(data, "FMR\x00 20\x00")
+	binary.BigEndian.PutUint16(data[10:12], record.ProductOwner)
+	binary.BigEndian.PutUint16(data[12:14], record.ProductType)
+	binary.BigEndian.PutUint16(data[14:16], record.CaptureEquipment)
+	binary.BigEndian.PutUint16(data[16:18], record.Width)
+	binary.BigEndian.PutUint16(data[18:20], record.Height)
+	binary.BigEndian.PutUint16(data[20:22], record.ResolutionX)
+	binary.BigEndian.PutUint16(data[22:24], record.ResolutionY)
+
+	data[24] = byte(len(record.Views))
+	for _, view := range record.Views {
+		data = append(data, byte(view.Finger), view.ViewNumber<<4|view.ImpressionType, view.Quality, byte(len(view.Minutiae)))
+		for _, minutia := range view.Minutiae {
+			data = binary.BigEndian.AppendUint16(data, uint16(minutia.Type)<<14|minutia.X)
+			data = binary.BigEndian.AppendUint16(data, minutia.Y)
+			data = append(data, minutia.Angle, minutia.Quality)
+		}
+
+		data = append(data, 0, 0)
+	}
+
+	binary.BigEndian.PutUint16(data[8:10], uint16(len(data)))
+
+	return data
 }
 
 // ParseFingerprintRecord parses the unencrypted INCITS 378-2004 PIV record.
@@ -117,37 +157,6 @@ func ParseFingerprintRecord(data []byte) (FingerprintRecord, error) {
 	}
 
 	return result, nil
-}
-
-// EncodeFingerprintRecord encodes an INCITS 378-2004 record without the
-// CBEFF or BC wrapper. Views and minutiae must follow the PIV profile's sizes
-// and ranges; no extended data are generated.
-func EncodeFingerprintRecord(record FingerprintRecord) []byte {
-	data := make([]byte, 26)
-	copy(data, "FMR\x00 20\x00")
-	binary.BigEndian.PutUint16(data[10:12], record.ProductOwner)
-	binary.BigEndian.PutUint16(data[12:14], record.ProductType)
-	binary.BigEndian.PutUint16(data[14:16], record.CaptureEquipment)
-	binary.BigEndian.PutUint16(data[16:18], record.Width)
-	binary.BigEndian.PutUint16(data[18:20], record.Height)
-	binary.BigEndian.PutUint16(data[20:22], record.ResolutionX)
-	binary.BigEndian.PutUint16(data[22:24], record.ResolutionY)
-
-	data[24] = byte(len(record.Views))
-	for _, view := range record.Views {
-		data = append(data, byte(view.Finger), view.ViewNumber<<4|view.ImpressionType, view.Quality, byte(len(view.Minutiae)))
-		for _, minutia := range view.Minutiae {
-			data = binary.BigEndian.AppendUint16(data, uint16(minutia.Type)<<14|minutia.X)
-			data = binary.BigEndian.AppendUint16(data, minutia.Y)
-			data = append(data, minutia.Angle, minutia.Quality)
-		}
-
-		data = append(data, 0, 0)
-	}
-
-	binary.BigEndian.PutUint16(data[8:10], uint16(len(data)))
-
-	return data
 }
 
 func fingerprintViewQuality(quality byte) bool {

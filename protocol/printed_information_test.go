@@ -3,10 +3,65 @@ package protocol
 import (
 	"bytes"
 	"errors"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
 )
+
+func TestEncodePrintedInformation(t *testing.T) {
+	line1, line2 := "Engineering", ""
+	info := PrintedInfo{
+		Name: " DOE, JANE ", EmployeeAffiliation: "Contractor",
+		ExpirationDate:         time.Date(2030, time.February, 28, 0, 0, 0, 0, time.UTC),
+		AgencyCardSerialNumber: "SN-001", IssuerIdentification: "ISSUER-00000001",
+		OrganizationAffiliationLine1: &line1, OrganizationAffiliationLine2: &line2,
+	}
+	want := []byte{
+		0x01, 11, ' ', 'D', 'O', 'E', ',', ' ', 'J', 'A', 'N', 'E', ' ',
+		0x02, 10, 'C', 'o', 'n', 't', 'r', 'a', 'c', 't', 'o', 'r',
+		0x04, 9, '2', '0', '3', '0', 'F', 'E', 'B', '2', '8',
+		0x05, 6, 'S', 'N', '-', '0', '0', '1',
+		0x06, 15, 'I', 'S', 'S', 'U', 'E', 'R', '-', '0', '0', '0', '0', '0', '0', '0', '1',
+		0x07, 11, 'E', 'n', 'g', 'i', 'n', 'e', 'e', 'r', 'i', 'n', 'g',
+		0x08, 0, 0xfe, 0,
+	}
+
+	got := EncodePrintedInformation(info)
+	if !bytes.Equal(got, want) {
+		t.Errorf("EncodePrintedInformation = %x, want %x", got, want)
+	}
+
+	parsed, err := ParsePrintedInformation(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(parsed, info) {
+		t.Errorf("printed information = %+v, want %+v", parsed, info)
+	}
+}
+
+func TestEncodePrintedInformationAbsentAffiliations(t *testing.T) {
+	info := PrintedInfo{
+		ExpirationDate:       time.Date(2030, time.January, 1, 0, 0, 0, 0, time.UTC),
+		IssuerIdentification: "ISSUER-00000001",
+	}
+	want := []byte{
+		0x01, 0, 0x02, 0, 0x04, 9, '2', '0', '3', '0', 'J', 'A', 'N', '0', '1', 0x05, 0,
+		0x06, 15, 'I', 'S', 'S', 'U', 'E', 'R', '-', '0', '0', '0', '0', '0', '0', '0', '1', 0xfe, 0,
+	}
+
+	got := EncodePrintedInformation(info)
+	if !bytes.Equal(got, want) {
+		t.Errorf("EncodePrintedInformation = %x, want %x", got, want)
+	}
+
+	parsed, err := ParsePrintedInformation(got)
+	if err != nil || !reflect.DeepEqual(parsed, info) {
+		t.Errorf("printed information = %+v, %v, want %+v", parsed, err, info)
+	}
+}
 
 func printedInformationFields() [][]byte {
 	return [][]byte{

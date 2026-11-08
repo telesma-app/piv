@@ -6,12 +6,56 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/asn1"
 	"errors"
 	"testing"
 
 	"github.com/telesma-app/piv/protocol"
 )
+
+func TestVerifySecurityObjectAndEveryDataGroup(t *testing.T) {
+	fixture := newSigningFixture(t, nil)
+	data := map[protocol.ContainerID][]byte{0xdb00: {0xf5, 1, 0x10}, 0x3001: {1, 1, 'A'}}
+
+	var hashes []protocol.DataGroupHash
+
+	for i, container := range []protocol.ContainerID{0xdb00, 0x3001} {
+		md := sha256.Sum256(data[container])
+		hashes = append(hashes, protocol.DataGroupHash{DataGroup: uint8(i + 1), Digest: md[:]})
+	}
+
+	der, err := protocol.EncodeLDSSecurityObject(protocol.LDSSecurityObject{HashAlgorithm: crypto.SHA256, Hashes: hashes})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, oid := range []asn1.ObjectIdentifier{oidLDS, oidLDSLegacy} {
+		object := protocol.SecurityObjectData{Mapping: []protocol.DataGroupMapping{{DataGroup: 1, ContainerID: 0xdb00}, {DataGroup: 2, ContainerID: 0x3001}}, SignedData: fixtureCMS(t, fixture, der, oid, false, true, nil, nil)}
+
+		lds, err := VerifySecurityObject(object, fixture.cert, fixture.options)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if err := VerifyDataGroups(object, lds, data); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := VerifyDataGroups(object, lds, map[protocol.ContainerID][]byte{0xdb00: data[0xdb00]}); !errors.Is(err, ErrIntegrity) {
+			t.Errorf("missing container = %v", err)
+		}
+
+		if err := VerifyDataGroups(object, lds, map[protocol.ContainerID][]byte{0xdb00: data[0xdb00], 0x3001: []byte("changed")}); !errors.Is(err, ErrIntegrity) {
+			t.Errorf("changed container = %v", err)
+		}
+
+		object.Mapping[1].DataGroup = 3
+		if _, err := VerifySecurityObject(object, fixture.cert, fixture.options); !errors.Is(err, ErrAuthentication) {
+			t.Errorf("mapping mismatch = %v", err)
+		}
+	}
+}
 
 func securityObjectKeyID(t testing.TB, cms []byte, subjectKeyID []byte) []byte {
 	t.Helper()

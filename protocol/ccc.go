@@ -26,6 +26,42 @@ type CCC struct {
 	AccessControlRuleTable     []byte
 }
 
+// EncodeCCC encodes a CCC's known fields without the outer 53 template,
+// for PutData (SP 800-73-5 Part 1, Table 9). Raw is ignored. Unspecified
+// mandatory fields are encoded with zero length. The caller supplies field
+// contents according to CCC's length contracts.
+func EncodeCCC(ccc CCC) []byte {
+	var cardIdentifier []byte
+	if ccc.CardIdentifier != nil {
+		cardIdentifier = ccc.CardIdentifier[:]
+	}
+
+	data := bertlv.Append(nil, 0xf0, cardIdentifier)
+	if ccc.CapabilityContainerVersion == nil {
+		data = append(data, 0xf1, 0)
+	} else {
+		data = append(data, 0xf1, 1, *ccc.CapabilityContainerVersion)
+	}
+
+	if ccc.CapabilityGrammarVersion == nil {
+		data = append(data, 0xf2, 0)
+	} else {
+		data = append(data, 0xf2, 1, *ccc.CapabilityGrammarVersion)
+	}
+
+	data = bertlv.Append(data, 0xf3, ccc.ApplicationsCardURL)
+	if ccc.PKCS15 == nil {
+		data = append(data, 0xf4, 0)
+	} else {
+		data = append(data, 0xf4, 1, *ccc.PKCS15)
+	}
+
+	data = append(data, 0xf5, 1, ccc.DataModel)
+	data = bertlv.Append(data, 0xf6, ccc.AccessControlRuleTable)
+
+	return append(data, 0xf7, 0, 0xfa, 0, 0xfb, 0, 0xfc, 0, 0xfd, 0, 0xfe, 0)
+}
+
 // ParseCCC parses object contents without the outer 53 template, as returned
 // by GetData. The one-byte data model number is required. Section 3.1.1 permits
 // other mandatory fields to be empty; this parser also accepts their absence

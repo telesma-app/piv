@@ -25,6 +25,26 @@ type CertificateData struct {
 	MSCUID []byte
 }
 
+// CertificateObject returns the certificate object associated with a key slot.
+func CertificateObject(key KeyReference) (Object, error) {
+	switch key {
+	case PIVAuthentication:
+		return PIVAuthenticationCertificate, nil
+	case DigitalSignature:
+		return DigitalSignatureCertificate, nil
+	case KeyManagement:
+		return KeyManagementCertificate, nil
+	case CardAuthentication:
+		return CardAuthenticationCertificate, nil
+	default:
+		if key >= RetiredKey1 && key <= RetiredKey20 {
+			return RetiredCertificate1 + Object(key-RetiredKey1), nil
+		}
+
+		return 0, fmt.Errorf("piv: key reference %02x has no certificate object", byte(key))
+	}
+}
+
 // EncodeCertificate encodes DER bytes as an uncompressed PIV certificate object
 // value without its outer 0x53 wrapper (SP 800-73-5 Part 1, Tables 11 and 16-18).
 func EncodeCertificate(der []byte) []byte {
@@ -60,6 +80,23 @@ func ParseCertificateData(data []byte) (CertificateData, error) {
 func DecodeCertificate(data []byte) ([]byte, error) {
 	certificate, _, err := decodeCertificate(data)
 	return certificate.DER, err
+}
+
+// ParseCertificate parses the value of a PIV certificate data object, after
+// removing its outer 0x53 wrapper. It supports DER and GZIP-compressed DER.
+// It does not verify the certificate's signature.
+func ParseCertificate(data []byte) (*x509.Certificate, error) {
+	certificate, err := DecodeCertificate(data)
+	if err != nil {
+		return nil, err
+	}
+
+	parsed, err := x509.ParseCertificate(certificate)
+	if err != nil {
+		return nil, fmt.Errorf("%w: certificate DER: %v", ErrInvalidResponse, err)
+	}
+
+	return parsed, nil
 }
 
 func decodeCertificate(data []byte) (CertificateData, []byte, error) {
@@ -135,21 +172,4 @@ func decodeCertificate(data []byte) (CertificateData, []byte, error) {
 	}
 
 	return certificate, intermediateCVC, nil
-}
-
-// ParseCertificate parses the value of a PIV certificate data object, after
-// removing its outer 0x53 wrapper. It supports DER and GZIP-compressed DER.
-// It does not verify the certificate's signature.
-func ParseCertificate(data []byte) (*x509.Certificate, error) {
-	certificate, err := DecodeCertificate(data)
-	if err != nil {
-		return nil, err
-	}
-
-	parsed, err := x509.ParseCertificate(certificate)
-	if err != nil {
-		return nil, fmt.Errorf("%w: certificate DER: %v", ErrInvalidResponse, err)
-	}
-
-	return parsed, nil
 }

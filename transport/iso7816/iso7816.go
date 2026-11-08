@@ -11,41 +11,7 @@ import (
 	pivtransport "github.com/telesma-app/piv/transport"
 )
 
-const shortCommandFragmentSize = 255
-
-type ioCard struct {
-	baseiso7816.Card
-	started bool
-}
-
-func (c *ioCard) Transmit(ctx context.Context, apdu []byte) ([]byte, error) {
-	c.started = true
-
-	response, err := c.Card.Transmit(ctx, apdu)
-	if err != nil {
-		return response, &pivtransport.IOError{Operation: pivtransport.IOTransmit, Err: err}
-	}
-
-	return response, nil
-}
-
-func (c *ioCard) exchangeError(err error) error {
-	var apduError *baseiso7816.APDUError
-	if errors.As(err, &apduError) {
-		if _, moreData := apduError.StatusWord().MoreDataLength(); !moreData {
-			return err
-		}
-		// An intermediate fragment must acknowledge receipt, not start a
-		// response while the command chain is incomplete.
-		err = baseiso7816.ErrInvalidResponse
-	}
-
-	if c.started {
-		return &pivtransport.DeviceInvalidatedError{Err: err}
-	}
-
-	return err
-}
+const maxShortCommandAPDULength = 261
 
 // Select activates the PIV application and parses its application property
 // template. Call it before Exchange and after switching applets. It borrows card
@@ -81,7 +47,7 @@ func Exchange(ctx context.Context, rawCard baseiso7816.Card, command baseiso7816
 
 		var err error
 
-		commands, err = baseiso7816.Chain(command, shortCommandFragmentSize)
+		commands, err = baseiso7816.Chain(command, maxShortCommandAPDULength)
 		if err != nil {
 			return baseiso7816.Response{}, err
 		}
@@ -95,4 +61,38 @@ func Exchange(ctx context.Context, rawCard baseiso7816.Card, command baseiso7816
 	}
 
 	return response, nil
+}
+
+type ioCard struct {
+	baseiso7816.Card
+	started bool
+}
+
+func (c *ioCard) Transmit(ctx context.Context, apdu []byte) ([]byte, error) {
+	c.started = true
+
+	response, err := c.Card.Transmit(ctx, apdu)
+	if err != nil {
+		return response, &pivtransport.IOError{Operation: pivtransport.IOTransmit, Err: err}
+	}
+
+	return response, nil
+}
+
+func (c *ioCard) exchangeError(err error) error {
+	var apduError *baseiso7816.APDUError
+	if errors.As(err, &apduError) {
+		if _, moreData := apduError.StatusWord().MoreDataLength(); !moreData {
+			return err
+		}
+		// An intermediate fragment must acknowledge receipt, not start a
+		// response while the command chain is incomplete.
+		err = baseiso7816.ErrInvalidResponse
+	}
+
+	if c.started {
+		return &pivtransport.DeviceInvalidatedError{Err: err}
+	}
+
+	return err
 }

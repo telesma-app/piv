@@ -27,7 +27,7 @@ for command and type details.
 ## Installation
 
 ```sh
-go get github.com/telesma-app/piv@v0.3.0
+go get github.com/telesma-app/piv@v0.3.1
 ```
 
 See [`go.mod`](go.mod) for the required Go version.
@@ -140,6 +140,9 @@ make lint
 
 The normal test suite does not require hardware.
 
+Commands follow SP 800-73-5 Part 2; data object helpers follow Part 1,
+Section 3. Models, encoders and parsers are grouped by object.
+
 ## License
 
 [Apache License 2.0](LICENSE).
@@ -148,5 +151,7 @@ The normal test suite does not require hardware.
 
 - [NIST SP 800-73-5 Part 1: PIV data model](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73pt1-5.pdf)
 - [NIST SP 800-73-5 Part 2: PIV command interface](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73pt2-5.pdf)
+- [NIST SP 800-73-5 Part 3: PIV middleware API](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73pt3-5.pdf)
 - [NIST SP 800-76-2: PIV biometric formats](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-76-2.pdf)
+- [NIST SP 800-78-5: PIV cryptographic algorithms and key sizes](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-78-5.pdf)
 - [PIV Secure Messaging (CS2/CS7): NIST SP 800-73-5 Part 2, Section 4](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73pt2-5.pdf#page=33)

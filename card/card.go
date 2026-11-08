@@ -75,6 +75,36 @@ func (d *Device) ApplicationProperties() (protocol.ApplicationPropertyTemplate, 
 	return d.application, d.hasApplication
 }
 
+// Exchange sends one complete APDU command through the same gate as card
+// workflows. It is the access boundary for vendor commands. Like transport.APDU,
+// it returns the final status word without interpretation. Separate Exchange
+// calls do not form an atomic multi-command workflow. Commands must leave PIV
+// selected for subsequent card operations.
+func (d *Device) Exchange(ctx context.Context, command iso7816.Command) (iso7816.Response, error) {
+	if err := d.lock(ctx); err != nil {
+		return iso7816.Response{}, err
+	}
+	defer d.unlock()
+
+	response, err := d.transport.Exchange(ctx, command)
+
+	return response, d.operationError(err)
+}
+
+// Close prevents new operations and closes the transport once. Waiting callers
+// return io.ErrClosedPipe even while the underlying Close is still running.
+// Close does not acquire the workflow gate; interrupting active I/O and waiting
+// for its completion follow the transport's contract. Repeated calls return
+// the same close error.
+func (d *Device) Close() error {
+	d.closeOnce.Do(func() {
+		close(d.closed)
+		d.closeErr = d.transport.Close()
+	})
+
+	return d.closeErr
+}
+
 // lock reserves the connection for a complete workflow. Its client commands
 // use the underlying transport directly to avoid re-entering this gate.
 func (d *Device) lock(ctx context.Context) error {
@@ -117,34 +147,4 @@ func (d *Device) operationError(err error) error {
 	}
 
 	return err
-}
-
-// Exchange sends one complete APDU command through the same gate as card
-// workflows. It is the access boundary for vendor commands. Like transport.APDU,
-// it returns the final status word without interpretation. Separate Exchange
-// calls do not form an atomic multi-command workflow. Commands must leave PIV
-// selected for subsequent card operations.
-func (d *Device) Exchange(ctx context.Context, command iso7816.Command) (iso7816.Response, error) {
-	if err := d.lock(ctx); err != nil {
-		return iso7816.Response{}, err
-	}
-	defer d.unlock()
-
-	response, err := d.transport.Exchange(ctx, command)
-
-	return response, d.operationError(err)
-}
-
-// Close prevents new operations and closes the transport once. Waiting callers
-// return io.ErrClosedPipe even while the underlying Close is still running.
-// Close does not acquire the workflow gate; interrupting active I/O and waiting
-// for its completion follow the transport's contract. Repeated calls return
-// the same close error.
-func (d *Device) Close() error {
-	d.closeOnce.Do(func() {
-		close(d.closed)
-		d.closeErr = d.transport.Close()
-	})
-
-	return d.closeErr
 }

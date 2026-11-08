@@ -53,6 +53,30 @@ type BiometricData struct {
 	Signature  []byte
 }
 
+// EncodeBiometricData encodes the known BC and FE fields for PutData. Header
+// lengths are derived from Record and Signature. The caller supplies a header
+// and signature for exactly those bytes; encoding does not sign the record.
+// Signature must fit its two-byte field and Record its four-byte field.
+func EncodeBiometricData(data BiometricData) []byte {
+	encoded := make([]byte, 88, 88+len(data.Record)+len(data.Signature))
+	encoded[0], encoded[1] = 3, data.Header.SecurityOptions
+	binary.BigEndian.PutUint32(encoded[2:6], uint32(len(data.Record)))
+	binary.BigEndian.PutUint16(encoded[6:8], uint16(len(data.Signature)))
+	binary.BigEndian.PutUint16(encoded[8:10], data.Header.FormatOwner)
+	binary.BigEndian.PutUint16(encoded[10:12], data.Header.FormatType)
+	encodeBiometricDate(encoded[12:20], data.Header.CreationDate)
+	encodeBiometricDate(encoded[20:28], data.Header.ValidFrom)
+	encodeBiometricDate(encoded[28:36], data.Header.ValidUntil)
+	encoded[36], encoded[37], encoded[38] = byte(data.Header.BiometricType>>16), byte(data.Header.BiometricType>>8), byte(data.Header.BiometricType)
+	encoded[39], encoded[40] = data.Header.DataType, byte(data.Header.Quality)
+	copy(encoded[41:59], data.Header.Creator[:])
+	copy(encoded[59:84], data.Header.FASCN[:])
+	encoded = append(encoded, data.Record...)
+	encoded = append(encoded, data.Signature...)
+
+	return bertlv.Append(bertlv.Append(nil, 0xbc, encoded), 0xfe, nil)
+}
+
 // ParseBiometricData parses object contents without the outer 53 template
 // (SP 800-73-5 Part 1, Tables 12, 14, and 41). The BC field contains the CBEFF
 // concatenation defined by SP 800-76-2, Tables 13-15. It does not verify CMS
@@ -145,30 +169,6 @@ func ParseBiometricData(data []byte) (BiometricData, error) {
 	result.Record, result.Signature = encoded[88:end], encoded[end:]
 
 	return result, nil
-}
-
-// EncodeBiometricData encodes the known BC and FE fields for PutData. Header
-// lengths are derived from Record and Signature. The caller supplies a header
-// and signature for exactly those bytes; encoding does not sign the record.
-// Signature must fit its two-byte field and Record its four-byte field.
-func EncodeBiometricData(data BiometricData) []byte {
-	encoded := make([]byte, 88, 88+len(data.Record)+len(data.Signature))
-	encoded[0], encoded[1] = 3, data.Header.SecurityOptions
-	binary.BigEndian.PutUint32(encoded[2:6], uint32(len(data.Record)))
-	binary.BigEndian.PutUint16(encoded[6:8], uint16(len(data.Signature)))
-	binary.BigEndian.PutUint16(encoded[8:10], data.Header.FormatOwner)
-	binary.BigEndian.PutUint16(encoded[10:12], data.Header.FormatType)
-	encodeBiometricDate(encoded[12:20], data.Header.CreationDate)
-	encodeBiometricDate(encoded[20:28], data.Header.ValidFrom)
-	encodeBiometricDate(encoded[28:36], data.Header.ValidUntil)
-	encoded[36], encoded[37], encoded[38] = byte(data.Header.BiometricType>>16), byte(data.Header.BiometricType>>8), byte(data.Header.BiometricType)
-	encoded[39], encoded[40] = data.Header.DataType, byte(data.Header.Quality)
-	copy(encoded[41:59], data.Header.Creator[:])
-	copy(encoded[59:84], data.Header.FASCN[:])
-	encoded = append(encoded, data.Record...)
-	encoded = append(encoded, data.Signature...)
-
-	return bertlv.Append(bertlv.Append(nil, 0xbc, encoded), 0xfe, nil)
 }
 
 func parseBiometricDate(data []byte) (time.Time, error) {

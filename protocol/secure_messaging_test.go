@@ -3,8 +3,28 @@ package protocol
 import (
 	"bytes"
 	"errors"
+	"reflect"
 	"testing"
 )
+
+func TestEncodeSecureMessagingCertificateSigner(t *testing.T) {
+	for _, intermediate := range [][]byte{nil, {0x7f, 0x21, 0x81, 3, 1, 2, 3}} {
+		signer := SecureMessagingCertificateSigner{CertificateDER: []byte{0x30, 0}, IntermediateCVC: intermediate}
+		want := []byte{0x70, 2, 0x30, 0, 0x71, 1, 0}
+		want = append(want, intermediate...)
+		want = append(want, 0xfe, 0)
+
+		got := EncodeSecureMessagingCertificateSigner(signer)
+		if !bytes.Equal(got, want) {
+			t.Errorf("EncodeSecureMessagingCertificateSigner = %x, want %x", got, want)
+		}
+
+		parsed, err := ParseSecureMessagingCertificateSigner(got)
+		if err != nil || !reflect.DeepEqual(parsed, signer) {
+			t.Errorf("signer = %+v, %v, want %+v", parsed, err, signer)
+		}
+	}
+}
 
 func TestParseSecureMessagingCertificateSigner(t *testing.T) {
 	der := certificateDER(t)

@@ -12,6 +12,8 @@ import (
 	"github.com/telesma-app/piv/protocol"
 )
 
+// RSA key transport: SP 800-73-5 Part 2, Appendix A.5.1.
+
 // Decrypt decrypts a modulus-sized RSA ciphertext. A nil opts or
 // *rsa.PKCS1v15DecryptOptions selects PKCS#1 v1.5; *rsa.OAEPOptions selects OAEP
 // with its explicit Hash, MGFHash, and Label. Supported hashes are SHA-1,
@@ -136,4 +138,28 @@ func (key *PrivateKey) Decrypt(
 	}
 
 	return decryption.PKCS1v15(response.Response)
+}
+
+type decrypter struct {
+	key            *PrivateKey
+	ctx            context.Context
+	authentication AuthenticationSource
+}
+
+var _ crypto.Decrypter = (*decrypter)(nil)
+
+// Decrypter adapts the key to crypto.Decrypter using ctx for every decryption.
+// Create it for the lifetime of the request. Cancellation follows the transport's
+// contract; options follow Decrypt and authentication follows [AuthenticationSource].
+// The adapter borrows the key and does not close its Device.
+func (key *PrivateKey) Decrypter(ctx context.Context, authentication AuthenticationSource) crypto.Decrypter {
+	return &decrypter{key: key, ctx: ctx, authentication: authentication}
+}
+
+func (d *decrypter) Public() crypto.PublicKey {
+	return d.key.Public()
+}
+
+func (d *decrypter) Decrypt(random io.Reader, ciphertext []byte, opts crypto.DecrypterOpts) ([]byte, error) {
+	return d.key.Decrypt(d.ctx, random, ciphertext, opts, d.authentication)
 }

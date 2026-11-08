@@ -27,6 +27,27 @@ type CHUID struct {
 	IssuerSignature []byte
 }
 
+// EncodeCHUID encodes a CHUID's known fields without the outer 53 template,
+// for PutData (SP 800-73-5 Part 1, Table 10). Raw is ignored. The expiration
+// date follows CHUID's calendar-date contract. A nil signature is omitted;
+// a non-nil empty signature encodes an unsigned placeholder.
+// Re-encoding does not preserve the original signed bytes or create a signature.
+func EncodeCHUID(chuid CHUID) []byte {
+	data := bertlv.Append(nil, 0x30, chuid.FASCN[:])
+	data = bertlv.Append(data, 0x34, chuid.GUID[:])
+
+	data = bertlv.Append(data, 0x35, []byte(chuid.ExpirationDate.Format("20060102")))
+	if chuid.CardholderUUID != nil {
+		data = bertlv.Append(data, 0x36, chuid.CardholderUUID[:])
+	}
+
+	if chuid.IssuerSignature != nil {
+		data = bertlv.Append(data, 0x3e, chuid.IssuerSignature)
+	}
+
+	return append(data, 0xfe, 0)
+}
+
 // ParseCHUID parses object contents without the outer 53 template, as returned
 // by GetData. FASC-N, GUID, and expiration date are required. For compatibility
 // with unpersonalized PIV tokens, the signature may be absent or empty. The

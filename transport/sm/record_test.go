@@ -180,7 +180,7 @@ func TestRecordProtectsBeforeFragmentation(t *testing.T) {
 		t.Errorf("complete command C-MAC = %x", next)
 	}
 
-	fragments, err := iso7816.Chain(protected, 255)
+	fragments, err := iso7816.Chain(protected, 261)
 	if err != nil {
 		t.Fatal(err)
 	}

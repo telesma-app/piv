@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/telesma-app/bertlv"
+	"github.com/telesma-app/iso7816"
 )
 
 // ApplicationPropertyTemplate describes the application selected by SELECT
@@ -18,6 +19,15 @@ type ApplicationPropertyTemplate struct {
 	ApplicationLabel          string
 	ApplicationURL            string
 	Algorithms                []Algorithm
+}
+
+// SelectCommand selects the PIV application by its nine-byte AID prefix.
+func SelectCommand() iso7816.Command {
+	return iso7816.Command{
+		INS: byte(Select), P1: 0x04,
+		Data: []byte{0xa0, 0x00, 0x00, 0x03, 0x08, 0x00, 0x00, 0x10, 0x00},
+		Le:   256, Encoding: iso7816.EncodingShort,
+	}
 }
 
 // ParseApplicationPropertyTemplate parses a complete SELECT response template,

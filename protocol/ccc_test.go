@@ -4,11 +4,58 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"testing"
 
 	"github.com/telesma-app/bertlv"
 )
+
+func TestEncodeCCC(t *testing.T) {
+	containerVersion, grammarVersion, pkcs15 := byte(0x21), byte(0x22), byte(0)
+	ccc := CCC{
+		CardIdentifier: &[21]byte{1, 2}, CapabilityContainerVersion: &containerVersion,
+		CapabilityGrammarVersion: &grammarVersion, ApplicationsCardURL: []byte{0xa0, 1},
+		PKCS15: &pkcs15, DataModel: 0x10, AccessControlRuleTable: make([]byte, 17),
+	}
+	want := []byte{
+		0xf0, 21, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+		0xf1, 1, 0x21, 0xf2, 1, 0x22, 0xf3, 2, 0xa0, 1, 0xf4, 1, 0, 0xf5, 1, 0x10,
+		0xf6, 17, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+		0xf7, 0, 0xfa, 0, 0xfb, 0, 0xfc, 0, 0xfd, 0, 0xfe, 0,
+	}
+
+	got := EncodeCCC(ccc)
+	if !bytes.Equal(got, want) {
+		t.Errorf("EncodeCCC = %x, want %x", got, want)
+	}
+
+	parsed, err := ParseCCC(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parsed.Raw = nil
+	if !reflect.DeepEqual(parsed, ccc) {
+		t.Errorf("CCC = %+v, want %+v", parsed, ccc)
+	}
+}
+
+func TestEncodeCCCEmptyMandatoryFields(t *testing.T) {
+	want := []byte{
+		0xf0, 0, 0xf1, 0, 0xf2, 0, 0xf3, 0, 0xf4, 0, 0xf5, 1, 0x10,
+		0xf6, 0, 0xf7, 0, 0xfa, 0, 0xfb, 0, 0xfc, 0, 0xfd, 0, 0xfe, 0,
+	}
+
+	got := EncodeCCC(CCC{DataModel: 0x10})
+	if !bytes.Equal(got, want) {
+		t.Errorf("EncodeCCC = %x, want %x", got, want)
+	}
+
+	if _, err := ParseCCC(got); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestParseCCCMinimalPIVObjects(t *testing.T) {
 	for _, data := range [][]byte{

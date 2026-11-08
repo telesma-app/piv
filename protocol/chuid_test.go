@@ -4,12 +4,70 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
 
 	"github.com/telesma-app/bertlv"
 )
+
+func TestEncodeCHUID(t *testing.T) {
+	chuid := CHUID{
+		FASCN: [25]byte{1, 2}, GUID: [16]byte{3, 4},
+		ExpirationDate: time.Date(2030, time.February, 28, 0, 0, 0, 0, time.UTC),
+		CardholderUUID: &[16]byte{5, 6}, IssuerSignature: []byte{0x30, 0},
+	}
+	want := []byte{
+		0x30, 25, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+		0x34, 16, 3, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+		0x35, 8, '2', '0', '3', '0', '0', '2', '2', '8',
+		0x36, 16, 5, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+		0x3e, 2, 0x30, 0, 0xfe, 0,
+	}
+
+	got := EncodeCHUID(chuid)
+	if !bytes.Equal(got, want) {
+		t.Errorf("EncodeCHUID = %x, want %x", got, want)
+	}
+
+	parsed, err := ParseCHUID(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parsed.Raw = nil
+	if !reflect.DeepEqual(parsed, chuid) {
+		t.Errorf("CHUID = %+v, want %+v", parsed, chuid)
+	}
+}
+
+func TestEncodeCHUIDOptionalFields(t *testing.T) {
+	chuid := CHUID{ExpirationDate: time.Date(2030, time.January, 1, 0, 0, 0, 0, time.UTC)}
+	for _, signature := range [][]byte{nil, {}} {
+		chuid.IssuerSignature = signature
+
+		data := EncodeCHUID(chuid)
+
+		got, err := ParseCHUID(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if got.CardholderUUID != nil || (got.IssuerSignature == nil) != (signature == nil) {
+			t.Errorf("optional fields = %+v, signature input %v", got, signature)
+		}
+
+		wantSuffix := []byte{0xfe, 0}
+		if signature != nil {
+			wantSuffix = []byte{0x3e, 0, 0xfe, 0}
+		}
+
+		if !bytes.HasSuffix(data, wantSuffix) {
+			t.Errorf("CHUID suffix = %x, want %x", data, wantSuffix)
+		}
+	}
+}
 
 func chuidFields() (fascn, guid, expiration []byte) {
 	fascn = append([]byte{0x30, 25}, bytes.Repeat([]byte{0x42}, 25)...)
