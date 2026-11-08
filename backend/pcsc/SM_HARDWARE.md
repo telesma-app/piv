@@ -34,14 +34,14 @@ This verified eight sequential authenticated exchanges per session. The short
 run used 12 framing GET RESPONSE commands during those exchanges, all with CLA
 `00`. The extended run returned the protected responses without GET RESPONSE.
 
-The original run used the local development workspace. Reproduction uses
-the dependencies in `go.mod` and independently trusted CA material:
+The original run used the local development workspace. Reproduction requires
+independently trusted CA material:
 
 ```sh
 PIV_SM_TEST=1 \
 PIV_READER='TOKEN2 FIDO2 Security Key(0024)' \
 PIV_SM_CA_FILE=/path/to/trusted-token2-piv-ca.pem \
-GOWORK=off go test -v ./backend/pcsc -run TestSMHardware -count=1
+go test -v ./backend/pcsc -run TestSMHardware -count=1
 ```
 
 `PIV_SM_INTERMEDIATE_FILE` optionally supplies X.509 intermediate certificates.
