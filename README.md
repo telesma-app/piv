@@ -21,14 +21,6 @@ workflows over [ISO 7816](https://github.com/telesma-app/iso7816) and
 
 Available operations depend on the card and its access policy.
 
-Private-key workflows support RSA-1024/2048/3072/4096, ECDSA P-256/P-384/P-521,
-pure Ed25519, and ECDH with P-256/P-384/P-521 or X25519. RSA-4096, P-521, Ed25519
-and X25519 use common card extension identifiers and require compatible firmware.
-Ed25519 signs the original message with `crypto.Hash(0)` or empty
-`*ed25519.Options`; Ed25519ph and Ed25519ctx are unsupported. X25519 public keys
-can come from generation, vendor metadata, or
-`x509.ParsePKIXPublicKey(certificate.RawSubjectPublicKeyInfo)`.
-
 See the [Go API reference](https://pkg.go.dev/github.com/telesma-app/piv)
 for command and type details.
 
