@@ -1,3 +1,22 @@
-.idea/
+# Go build and test artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+_obj/
+
+# Local Go workspaces
 go.work
 go.work.sum
+
+# Local environment
+.env
+
+# IDE files
+.idea/
+
+# macOS metadata
+.DS_Store
