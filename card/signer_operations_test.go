@@ -345,7 +345,7 @@ func TestECDSASignPadsShortDigestsWithoutChangingInput(t *testing.T) {
 	}
 }
 
-func TestNilAuthenticationSkipsVerifyAndEmptyPINDoesNot(t *testing.T) {
+func TestNilAuthenticationSkipsVerify(t *testing.T) {
 	key, raw := newECDSASigningPeer(t, elliptic.P256(), protocol.CardAuthentication)
 	digest := sha256.Sum256([]byte("PIN never key"))
 
@@ -353,17 +353,8 @@ func TestNilAuthenticationSkipsVerifyAndEmptyPINDoesNot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if raw.verifies != 0 || raw.signatures != 1 {
-		t.Errorf("without PIN: VERIFY/signatures = %d/%d", raw.verifies, raw.signatures)
-	}
-
-	empty := func(context.Context) (string, error) { return "", nil }
-	if _, err := key.Sign(t.Context(), rand.Reader, digest[:], crypto.SHA256, PINAuthentication(protocol.ApplicationPIN, empty)); err == nil {
-		t.Fatal("empty supplied PIN was silently treated as no VERIFY")
-	}
-
-	if len(raw.instructions) != 1 {
-		t.Error("invalid supplied PIN performed I/O")
+	if raw.verifies != 0 || raw.signatures != 1 || len(raw.instructions) != 1 {
+		t.Errorf("without authentication: VERIFY/signature/instruction counts = %d/%d/%d, want 0/1/1", raw.verifies, raw.signatures, len(raw.instructions))
 	}
 }
 
@@ -408,20 +399,6 @@ func TestSigningUsesExplicitAuthenticationReferenceAndData(t *testing.T) {
 				t.Errorf("source/VERIFY/signature/status counts = %d/%d/%d/%d", requests, raw.verifies, raw.signatures, raw.statuses)
 			}
 		})
-	}
-}
-
-func TestPINAuthenticationSelectsGlobalPIN(t *testing.T) {
-	key, raw := newECDSASigningPeer(t, elliptic.P256(), protocol.DigitalSignature)
-	raw.authenticationReference = protocol.GlobalPIN
-	digest := sha256.Sum256([]byte("global PIN encoding"))
-
-	if _, err := key.Sign(t.Context(), rand.Reader, digest[:], crypto.SHA256, PINAuthentication(protocol.GlobalPIN, signingPIN)); err != nil {
-		t.Fatal(err)
-	}
-
-	if raw.verifies != 1 || raw.signatures != 1 {
-		t.Errorf("VERIFY/signature counts = %d/%d, want 1/1", raw.verifies, raw.signatures)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"reflect"
 	"testing"
 )
 
@@ -12,24 +13,41 @@ func TestIrisImageRecordWire(t *testing.T) {
 	// representation header plus a five-byte quality block and three image bytes.
 	encoded := biometricHex(t, "49495200303230000000004c00010001"+
 		"0000003c07e80102030405ffff0112342345015034564567"+
-		"000102070a4501800100080100ffffffff00c000c00080008000a000a000000003aabbcc")
+		"000102070a4501800100080100ffffffff00c000d00080009000a000b000000003aabbcc")
+	want := IrisImageRecord{
+		NumberOfEyes: 1,
+		Representations: []IrisRepresentation{{
+			CaptureDate:       [9]byte{0x07, 0xe8, 1, 2, 3, 4, 5, 0xff, 0xff},
+			CaptureTechnology: 1, CaptureVendor: 0x1234, CaptureType: 0x2345,
+			Quality: []BiometricQuality{{Score: 80, Vendor: 0x3456, Algorithm: 0x4567}},
+			Number:  1, Eye: 2, ImageType: 7, ImageFormat: 0x0a, ImageProperties: 0x45,
+			Width: 384, Height: 256, BitDepth: 8, Range: 256, RollAngle: 0xffff, RollUncertainty: 0xffff,
+			CenterXMinimum: 192, CenterXMaximum: 208, CenterYMinimum: 128, CenterYMaximum: 144,
+			DiameterMinimum: 160, DiameterMaximum: 176, Image: []byte{0xaa, 0xbb, 0xcc},
+		}},
+	}
+
+	if got := EncodeIrisImageRecord(want); !bytes.Equal(got, encoded) {
+		t.Errorf("iris bytes = %x, want %x", got, encoded)
+	}
 
 	parsed, err := ParseIrisImageRecord(encoded)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if parsed.NumberOfEyes != 1 || len(parsed.Representations) != 1 {
-		t.Fatalf("iris record = %+v", parsed)
+	if len(parsed.Representations) != 1 {
+		t.Fatalf("iris representations = %d, want 1", len(parsed.Representations))
 	}
 
-	iris := parsed.Representations[0]
-	if iris.Number != 1 || iris.Eye != 2 || iris.CaptureTechnology != 1 || iris.CaptureVendor != 0x1234 || iris.CaptureType != 0x2345 || len(iris.Quality) != 1 || iris.Quality[0] != (BiometricQuality{Score: 80, Vendor: 0x3456, Algorithm: 0x4567}) || iris.Width != 384 || iris.Height != 256 || iris.RollAngle != 0xffff || iris.CenterXMinimum != 192 || !bytes.Equal(iris.Image, []byte{0xaa, 0xbb, 0xcc}) {
-		t.Fatalf("iris representation = %+v", iris)
+	if !bytes.Equal(parsed.Raw, encoded) || !bytes.Equal(parsed.Representations[0].Raw, encoded[16:]) {
+		t.Error("iris Raw fields differ from the encoded record and representation")
 	}
 
-	if !bytes.Equal(EncodeIrisImageRecord(parsed), encoded) {
-		t.Error("iris bytes differ from independent layout")
+	parsed.Raw, parsed.Representations[0].Raw = nil, nil
+
+	if !reflect.DeepEqual(parsed, want) {
+		t.Errorf("iris record = %+v, want %+v", parsed, want)
 	}
 }
 

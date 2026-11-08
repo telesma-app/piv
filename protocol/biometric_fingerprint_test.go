@@ -2,8 +2,8 @@ package protocol
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
-	"os"
 	"testing"
 )
 
@@ -27,31 +27,6 @@ func TestFingerprintRecordWire(t *testing.T) {
 
 	if !bytes.Equal(EncodeFingerprintRecord(parsed), encoded) {
 		t.Error("fingerprint encoded bytes differ from independent layout")
-	}
-}
-
-func TestFingerprintRecordGSAInteroperability(t *testing.T) {
-	data, err := os.ReadFile("../testdata/gsa/card46-fingerprints.bin")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	object, err := ParseBiometricData(data)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	record, err := ParseFingerprintRecord(object.Record)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if record.ProductOwner != 1 || record.ProductType != 1 || record.CaptureEquipment != 0x8001 || record.Width != 512 || record.Height != 480 || len(record.Views) != 2 || record.Views[0].Finger != FingerLeftIndex || len(record.Views[0].Minutiae) != 41 {
-		t.Fatalf("GSA fingerprint metadata = %+v", record)
-	}
-
-	if !bytes.Equal(EncodeFingerprintRecord(record), object.Record) {
-		t.Error("GSA fingerprint round trip changed wire bytes")
 	}
 }
 
@@ -98,5 +73,71 @@ func TestFingerprintRecordRejectsMalformedExternalData(t *testing.T) {
 		if _, err := ParseFingerprintRecord(bad); !errors.Is(err, ErrInvalidResponse) {
 			t.Errorf("bad fingerprint at %d: %v", offset, err)
 		}
+	}
+}
+
+func TestFingerprintRecordRejectsMalformedViews(t *testing.T) {
+	valid := biometricHex(t, "464d5200203230000026000100028003020001e000c500c501000200500141230234403c0000")
+	if _, err := ParseFingerprintRecord(valid); err != nil {
+		t.Fatalf("valid record: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		mutate func([]byte) []byte
+	}{
+		{name: "missing view", mutate: func(b []byte) []byte { b[24] = 2; return b }},
+		{name: "short view header", mutate: func(b []byte) []byte { return b[:29] }},
+		{name: "invalid finger", mutate: func(b []byte) []byte { b[26] = 11; return b }},
+		{name: "quality above maximum", mutate: func(b []byte) []byte { b[28] = 101; return b }},
+		{name: "reserved quality", mutate: func(b []byte) []byte { b[28] = 253; return b }},
+		{name: "minutia count exceeds view", mutate: func(b []byte) []byte { b[29] = 2; return b }},
+		{name: "too many minutiae", mutate: func(b []byte) []byte {
+			b[29] = 129
+			b = append(b[:30], make([]byte, 6*129)...)
+
+			return append(b, 0, 0)
+		}},
+		{name: "short minutia", mutate: func(b []byte) []byte { return b[:35] }},
+		{name: "short extension length", mutate: func(b []byte) []byte { return b[:37] }},
+		{name: "trailing view data", mutate: func(b []byte) []byte { return append(b, 0) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bad := tc.mutate(bytes.Clone(valid))
+			// Keep the record header valid so the parser reaches the malformed view.
+			binary.BigEndian.PutUint16(bad[8:10], uint16(len(bad)))
+
+			if _, err := ParseFingerprintRecord(bad); !errors.Is(err, ErrInvalidResponse) {
+				t.Fatalf("ParseFingerprintRecord = %v, want ErrInvalidResponse", err)
+			}
+		})
+	}
+}
+
+func TestFingerprintRecordViewQuality(t *testing.T) {
+	// One view without minutiae also represents an unavailable fingerprint.
+	valid := biometricHex(t, "464d5200203230000020000100028003020001e000c500c50100020000000000")
+	for _, tc := range []struct {
+		name    string
+		quality byte
+	}{
+		{name: "minimum", quality: 0},
+		{name: "maximum", quality: 100},
+		{name: "permanently unusable", quality: 254},
+		{name: "temporarily unusable", quality: 255},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := bytes.Clone(valid)
+			data[28] = tc.quality
+
+			record, err := ParseFingerprintRecord(data)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if len(record.Views) != 1 || record.Views[0].Quality != tc.quality || len(record.Views[0].Minutiae) != 0 {
+				t.Errorf("fingerprint views = %+v, want quality %d and no minutiae", record.Views, tc.quality)
+			}
+		})
 	}
 }

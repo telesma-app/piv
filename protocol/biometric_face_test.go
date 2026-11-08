@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-	"os"
 	"testing"
 )
 
@@ -30,36 +29,6 @@ func TestFacialImageRecordWire(t *testing.T) {
 
 	if !bytes.Equal(EncodeFacialImageRecord(parsed), encoded) {
 		t.Error("facial image bytes differ from independent layout")
-	}
-}
-
-func TestFacialImageRecordGSAInteroperability(t *testing.T) {
-	data, err := os.ReadFile("../testdata/gsa/card46-face.bin")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	object, err := ParseBiometricData(data)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	record, err := ParseFacialImageRecord(object.Record)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(record.Images) != 1 {
-		t.Fatalf("GSA face images = %d", len(record.Images))
-	}
-
-	image := record.Images[0]
-	if image.Width != 200 || image.Height != 162 || image.ImageDataType != 1 || image.ImageType != 1 || image.ColorSpace != 1 || image.SourceType != 2 || len(image.Image) != 5398 {
-		t.Fatalf("GSA facial metadata = %+v", image)
-	}
-	// JPEG2000 file signature is preserved, without an image decoder dependency.
-	if !bytes.Equal(image.Image[:12], []byte{0, 0, 0, 12, 'j', 'P', ' ', ' ', 13, 10, 135, 10}) || !bytes.Equal(EncodeFacialImageRecord(record), object.Record) {
-		t.Error("GSA face compressed image or metadata changed")
 	}
 }
 

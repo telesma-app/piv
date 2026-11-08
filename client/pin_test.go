@@ -76,6 +76,16 @@ func TestReferenceStatusPreservesTransportInvalidation(t *testing.T) {
 	}
 }
 
+func TestResetSecurityStatus(t *testing.T) {
+	c := NewClient(newScript(t, exchangeStep{
+		command: []byte{0, 0x20, 0xff, 0x98}, response: iso7816.Response{Status: 0x9000},
+	}))
+
+	if err := c.ResetSecurityStatus(t.Context(), protocol.PairingCode); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestVerifyPIN(t *testing.T) {
 	c := NewClient(newScript(t, exchangeStep{
 		command:  []byte{0, 0x20, 0, 0x80, 8, '1', '2', '3', '4', '5', '6', 0xff, 0xff},
@@ -108,6 +118,28 @@ func TestVerifyPINReturnsReferenceDataError(t *testing.T) {
 	}
 }
 
+func TestEncodePIN(t *testing.T) {
+	for _, tc := range []struct {
+		pin  string
+		want [8]byte
+	}{
+		{pin: "012345", want: [8]byte{'0', '1', '2', '3', '4', '5', 0xff, 0xff}},
+		{pin: "0123456", want: [8]byte{'0', '1', '2', '3', '4', '5', '6', 0xff}},
+		{pin: "01234567", want: [8]byte{'0', '1', '2', '3', '4', '5', '6', '7'}},
+	} {
+		t.Run(tc.pin, func(t *testing.T) {
+			encoded, err := EncodePIN(tc.pin)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if encoded != tc.want {
+				t.Errorf("EncodePIN = %x, want %x", encoded, tc.want)
+			}
+		})
+	}
+}
+
 func TestInvalidPINDoesNotConsumeRetry(t *testing.T) {
 	for _, pin := range []string{"12345", "123456789", "12345a", "１２３４５６"} {
 		t.Run(pin, func(t *testing.T) {
@@ -129,6 +161,25 @@ func TestChangePIN(t *testing.T) {
 	}
 }
 
+func TestChangePINRejectsInvalidInputBeforeIO(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		current     string
+		replacement string
+	}{
+		{name: "invalid current", current: "12345", replacement: "876543"},
+		{name: "invalid replacement", current: "123456", replacement: "87654a"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := NewClient(newScript(t))
+
+			if err := c.ChangePIN(t.Context(), tc.current, tc.replacement); err == nil {
+				t.Fatal("expected invalid PIN encoding")
+			}
+		})
+	}
+}
+
 func TestUnblockPINReportsPUKRetries(t *testing.T) {
 	puk := [8]byte{0, 1, 2, 3, 4, 5, 6, 7}
 	command := append([]byte{0, 0x2c, 0, 0x80, 16}, puk[:]...)
@@ -143,5 +194,14 @@ func TestUnblockPINReportsPUKRetries(t *testing.T) {
 
 	if !bytes.Equal(puk[:], []byte{0, 1, 2, 3, 4, 5, 6, 7}) {
 		t.Error("caller PUK was modified")
+	}
+}
+
+func TestUnblockPINRejectsInvalidReplacementBeforeIO(t *testing.T) {
+	c := NewClient(newScript(t))
+	puk := [8]byte{0, 1, 2, 3, 4, 5, 6, 7}
+
+	if err := c.UnblockPIN(t.Context(), puk, "12345"); err == nil {
+		t.Fatal("expected invalid PIN encoding")
 	}
 }

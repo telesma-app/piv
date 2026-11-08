@@ -1,8 +1,10 @@
 package sm
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
@@ -42,12 +44,21 @@ func TestTrustFromCertificate(t *testing.T) {
 		SubjectKeyId: []byte{1, 2, 3, 4, 5, 6, 7, 8, 9},
 	}
 
+	rsaSigner, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	for _, test := range []struct {
-		name     string
-		change   func(*x509.Certificate, *x509.VerifyOptions)
-		wantPass bool
+		name         string
+		change       func(*x509.Certificate, *x509.VerifyOptions)
+		intermediate []byte
+		wantPass     bool
 	}{
 		{name: "trusted content signer", change: func(*x509.Certificate, *x509.VerifyOptions) {}, wantPass: true},
+		// Open authenticates the intermediate contents; this function borrows
+		// the supplied bytes without parsing them.
+		{name: "trusted RSA signer with intermediate", change: func(*x509.Certificate, *x509.VerifyOptions) {}, intermediate: []byte{0x7f, 0x21, 0}, wantPass: true},
 		{name: "explicit roots required", change: func(_ *x509.Certificate, o *x509.VerifyOptions) { o.Roots = nil }},
 		{name: "untrusted chain", change: func(_ *x509.Certificate, o *x509.VerifyOptions) { o.Roots = x509.NewCertPool() }},
 		{name: "expired", change: func(_ *x509.Certificate, o *x509.VerifyOptions) { o.CurrentTime = now.Add(2 * time.Hour) }},
@@ -59,7 +70,12 @@ func TestTrustFromCertificate(t *testing.T) {
 			certTemplate, verifyOptions := *template, options
 			test.change(&certTemplate, &verifyOptions)
 
-			der, err := x509.CreateCertificate(rand.Reader, &certTemplate, root, &signer.PublicKey, rootKey)
+			public := signer.Public()
+			if test.intermediate != nil {
+				public = &rsaSigner.PublicKey
+			}
+
+			der, err := x509.CreateCertificate(rand.Reader, &certTemplate, root, public, rootKey)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -69,10 +85,26 @@ func TestTrustFromCertificate(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			trust, err := TrustFromCertificate(cert, verifyOptions, nil)
+			trust, err := TrustFromCertificate(cert, verifyOptions, test.intermediate)
 			if test.wantPass {
-				if err != nil || trust.IssuerID != ([8]byte{1, 2, 3, 4, 5, 6, 7, 8}) {
-					t.Errorf("TrustFromCertificate = %v, %v", trust, err)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				if want := ([8]byte{1, 2, 3, 4, 5, 6, 7, 8}); trust.IssuerID != want {
+					t.Errorf("issuer ID = %x, want %x", trust.IssuerID, want)
+				}
+
+				if trust.PublicKey != cert.PublicKey {
+					t.Error("trust did not retain the certificate public key")
+				}
+
+				if test.intermediate == nil {
+					if trust.IntermediateCVC != nil {
+						t.Error("trust added an intermediate CVC")
+					}
+				} else if !bytes.Equal(trust.IntermediateCVC, test.intermediate) || &trust.IntermediateCVC[0] != &test.intermediate[0] {
+					t.Error("trust did not borrow the intermediate CVC unchanged")
 				}
 			} else if !errors.Is(err, ErrAuthentication) {
 				t.Errorf("TrustFromCertificate = %v, want authentication error", err)

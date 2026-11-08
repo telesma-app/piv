@@ -346,3 +346,32 @@ func appendAlgorithmMembers(t testing.TB, signature, extra []byte) []byte {
 
 	return bertlv.Append(nil, 0x30, value)
 }
+
+func appendCertificateAlgorithmMembers(t testing.TB, raw, extra []byte) []byte {
+	t.Helper()
+
+	_, body, _, err := bertlv.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for data := body; len(data) != 0; {
+		tag, value, rest, err := bertlv.Parse(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if tag == 0x5f37 {
+			body = bytes.Clone(body[:len(body)-len(data)])
+			body = bertlv.Append(body, 0x5f37, appendAlgorithmMembers(t, value, extra))
+
+			return bertlv.Append(nil, 0x7f21, body)
+		}
+
+		data = rest
+	}
+
+	t.Fatal("fixture certificate lacks signature")
+
+	return nil
+}

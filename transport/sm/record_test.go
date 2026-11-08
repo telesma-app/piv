@@ -134,7 +134,7 @@ func TestCS2RecordVectors(t *testing.T) {
 	})
 }
 
-func TestRecordProtectsBeforeFragmentation(t *testing.T) {
+func TestRecordProtectsCompleteCommand(t *testing.T) {
 	data := make([]byte, 250)
 	for i := range data {
 		data[i] = byte(i)
@@ -157,25 +157,8 @@ func TestRecordProtectsBeforeFragmentation(t *testing.T) {
 		t.Errorf("complete command C-MAC = %x", next)
 	}
 
-	fragments, err := iso7816.Chain(protected, 261)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(fragments) != 2 {
-		t.Fatalf("fragment count = %d, want 2", len(fragments))
-	}
-
-	if fragments[0].CLA != 0x1c || fragments[0].Le != 0 || len(fragments[0].Data) != 255 || fragments[1].CLA != 0x0c || fragments[1].Le != 256 || len(fragments[1].Data) != 19 {
-		t.Errorf("fragments = %+v", fragments)
-	}
-
-	if !bytes.Equal(append(fragments[0].Data, fragments[1].Data...), protected.Data) {
-		t.Error("fragmentation changed protected logical command")
-	}
-
 	if session.counter != [16]byte{15: 1} {
-		t.Errorf("counter advanced while preparing fragments: %x", session.counter)
+		t.Errorf("counter advanced while preparing a protected command: %x", session.counter)
 	}
 }
 

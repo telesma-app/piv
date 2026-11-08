@@ -6,6 +6,8 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha1"
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"errors"
@@ -197,6 +199,64 @@ func TestCertificateRejectsSignatureEncodingAndAlgorithm(t *testing.T) {
 				_, err := verifyCertificate(suite, modified, Trust{IssuerID: issuer, PublicKey: &signer.PublicKey})
 				if !errors.Is(err, test.want) {
 					t.Errorf("verify = %v, want %v", err, test.want)
+				}
+			})
+		}
+	})
+}
+
+func TestCertificateAuthenticatesIntermediateCVC(t *testing.T) {
+	testCipherSuites(t, func(t *testing.T, suite cipherSuite) {
+		card, signer := certificateKeysForSuite(t, suite)
+
+		root, err := rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		issuer := [8]byte{1, 2, 3, 4, 5, 6, 7, 8}
+
+		signerECDH, err := signer.ECDH()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		point := signerECDH.PublicKey().Bytes()
+		identifier := sha1.Sum(point)
+		body := certificateBody(issuer, identifier[:8], point, 0x12)
+		body = append([]byte{0x5f, 0x29, 0x81, 1}, body[3:]...)
+		intermediate := signCertificate(t, body, root, true)
+		guid := [16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
+		raw := signCertificate(t, certificateBody([8]byte(identifier[:8]), guid[:], card.PublicKey().Bytes(), 0), signer, false)
+		trust := Trust{IssuerID: issuer, PublicKey: &root.PublicKey, IntermediateCVC: intermediate}
+
+		got, err := verifyCertificate(suite, raw, trust)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if got.PublicKey == nil || !bytes.Equal(got.PublicKey.Bytes(), card.PublicKey().Bytes()) || got.GUID != guid || !bytes.Equal(got.Raw, raw) {
+			t.Errorf("verified card identity = %+v, want GUID %x and original CVC/public key", got, guid)
+		}
+
+		for _, tc := range []struct {
+			name         string
+			intermediate []byte
+			want         error
+		}{
+			{name: "signature tampered", intermediate: mutateCertificate(intermediate, len(intermediate)-1), want: ErrAuthentication},
+			{name: "wrong issuer", intermediate: signCertificate(t, certificateBody([8]byte{9}, identifier[:8], point, 0x12), root, true), want: ErrAuthentication},
+			{name: "wrong subject identifier", intermediate: signCertificate(t, certificateBody(issuer, make([]byte, 8), point, 0x12), root, true), want: ErrAuthentication},
+			{name: "wrong role", intermediate: signCertificate(t, certificateBody(issuer, identifier[:8], point, 0), root, true), want: ErrInvalidResponse},
+			{name: "extra RSA AlgorithmIdentifier member", intermediate: appendCertificateAlgorithmMembers(t, intermediate, []byte{5, 0}), want: ErrInvalidResponse},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				badTrust := trust
+				badTrust.IntermediateCVC = tc.intermediate
+
+				got, err := verifyCertificate(suite, raw, badTrust)
+				if !errors.Is(err, tc.want) || got.PublicKey != nil || got.Raw != nil || got.GUID != [16]byte{} {
+					t.Errorf("verifyCertificate = %+v, %v; want %v without a card identity", got, err, tc.want)
 				}
 			})
 		}

@@ -223,3 +223,38 @@ func checkTransportFraming(t *testing.T, vector framingVector) {
 		t.Errorf("raw Close calls = %d, want 1", raw.closeCalls)
 	}
 }
+
+func TestProtectedRecordFragmentationPreservesLogicalCommand(t *testing.T) {
+	data := make([]byte, 250)
+	for i := range data {
+		data[i] = byte(i)
+	}
+
+	session := newRecordSession(recordKeys(), iso7816.EncodingShort)
+
+	protected, _, err := session.protect(iso7816.Command{INS: 0x87, P1: 0x3f, P2: 0x9a, Data: data, Le: 256})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fragments, err := iso7816.Chain(protected, 261)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(fragments) != 2 {
+		t.Fatalf("fragment count = %d, want 2", len(fragments))
+	}
+
+	if fragments[0].CLA != 0x1c || fragments[0].Le != 0 || len(fragments[0].Data) != 255 || fragments[1].CLA != 0x0c || fragments[1].Le != 256 || len(fragments[1].Data) != 19 {
+		t.Errorf("fragments = %+v", fragments)
+	}
+
+	if !bytes.Equal(append(fragments[0].Data, fragments[1].Data...), protected.Data) {
+		t.Error("fragmentation changed protected logical command")
+	}
+
+	if session.counter != [16]byte{15: 1} {
+		t.Errorf("counter advanced while preparing fragments: %x", session.counter)
+	}
+}

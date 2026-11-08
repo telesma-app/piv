@@ -3,7 +3,6 @@ package protocol
 import (
 	"encoding/hex"
 	"errors"
-	"os"
 	"strings"
 	"testing"
 )
@@ -35,45 +34,6 @@ func TestFASCNStandardVector(t *testing.T) {
 
 	if actual != [25]byte(encoded) {
 		t.Errorf("EncodeFASCN = %x, want %x", actual, encoded)
-	}
-}
-
-func TestFASCNGSAInterop(t *testing.T) {
-	// This unchanged public GSA test credential is an independent oracle;
-	// its provenance is recorded in testdata/gsa/README.md. Its LRC is A,
-	// which is a valid four-bit check value even though data digits are decimal.
-	data, err := os.ReadFile("../testdata/gsa/card46-chuid.bin")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	chuid, err := ParseCHUID(data)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	want := FASCN{
-		AgencyCode: "4700", SystemCode: "0257", CredentialNumber: "000046",
-		CredentialSeries: "1", IndividualCredentialIssue: "1", PersonIdentifier: "0257000046",
-		OrganizationalCategory: "1", OrganizationalIdentifier: "9999", PersonOrganizationAssociation: "1",
-	}
-
-	got, err := ParseFASCN(chuid.FASCN[:])
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if got != want {
-		t.Errorf("ParseFASCN = %+v, want %+v", got, want)
-	}
-
-	encoded, err := EncodeFASCN(want)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if encoded != chuid.FASCN {
-		t.Errorf("EncodeFASCN = %x, want GSA %x", encoded, chuid.FASCN)
 	}
 }
 

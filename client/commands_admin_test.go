@@ -13,36 +13,63 @@ import (
 )
 
 type authenticationRequestTransport struct {
-	request []byte
+	request  []byte
+	response iso7816.Response
+	err      error
 }
 
 func (s *authenticationRequestTransport) Exchange(ctx context.Context, command iso7816.Command) (iso7816.Response, error) {
 	s.request = command.Data
-	return iso7816.Response{Status: 0x9000}, nil
+	return s.response, s.err
 }
 
 func TestGeneralAuthenticateClearsOwnedRequest(t *testing.T) {
-	raw := &authenticationRequestTransport{}
-	c := NewClient(raw)
-	witness := []byte{1, 2, 3, 4, 5, 6, 7, 8}
+	cause := errors.New("connection lost")
+	for _, tc := range []struct {
+		name     string
+		response iso7816.Response
+		err      error
+	}{
+		{name: "success", response: iso7816.Response{Status: 0x9000}},
+		{name: "transport error", err: cause},
+		{name: "APDU error", response: iso7816.Response{Status: 0x6982}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := &authenticationRequestTransport{response: tc.response, err: tc.err}
+			c := NewClient(raw)
+			witness := []byte{1, 2, 3, 4, 5, 6, 7, 8}
 
-	_, err := c.GeneralAuthenticate(t.Context(), protocol.TripleDES, protocol.CardApplicationAdministration, protocol.DynamicAuthentication{
-		Witness: witness,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+			_, err := c.GeneralAuthenticate(t.Context(), protocol.TripleDES, protocol.CardApplicationAdministration, protocol.DynamicAuthentication{
+				Witness: witness,
+			})
+			switch {
+			case tc.err != nil:
+				if !errors.Is(err, cause) {
+					t.Errorf("GeneralAuthenticate = %v, want transport cause", err)
+				}
+			case tc.response.Status != 0x9000:
+				var apdu *iso7816.APDUError
+				if !errors.As(err, &apdu) || apdu.StatusWord() != tc.response.Status {
+					t.Errorf("GeneralAuthenticate = %v, want APDU %s", err, tc.response.Status)
+				}
+			default:
+				if err != nil {
+					t.Errorf("GeneralAuthenticate = %v, want success", err)
+				}
+			}
 
-	if len(raw.request) == 0 {
-		t.Fatal("request was not captured")
-	}
+			if len(raw.request) == 0 {
+				t.Fatal("request was not captured")
+			}
 
-	if !bytes.Equal(raw.request, make([]byte, len(raw.request))) {
-		t.Error("owned authentication request was not cleared")
-	}
+			if !bytes.Equal(raw.request, make([]byte, len(raw.request))) {
+				t.Error("owned authentication request was not cleared")
+			}
 
-	if !bytes.Equal(witness, []byte{1, 2, 3, 4, 5, 6, 7, 8}) {
-		t.Error("GeneralAuthenticate cleared caller's borrowed witness")
+			if !bytes.Equal(witness, []byte{1, 2, 3, 4, 5, 6, 7, 8}) {
+				t.Error("GeneralAuthenticate cleared caller's borrowed witness")
+			}
+		})
 	}
 }
 

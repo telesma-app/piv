@@ -175,6 +175,7 @@ func TestRSADecryptRejectsInvalidInputBeforeAuthentication(t *testing.T) {
 		name       string
 		opts       crypto.DecrypterOpts
 		ciphertext func(*rsa.PublicKey) []byte
+		want       error
 	}{
 		{name: "unknown options", opts: 42},
 		{name: "zero OAEP hash", opts: &rsa.OAEPOptions{}},
@@ -183,14 +184,15 @@ func TestRSADecryptRejectsInvalidInputBeforeAuthentication(t *testing.T) {
 		{name: "unknown MGF hash", opts: &rsa.OAEPOptions{Hash: crypto.SHA256, MGFHash: crypto.Hash(255)}},
 		{name: "negative session key length", opts: &rsa.PKCS1v15DecryptOptions{SessionKeyLen: -1}}, //nolint:staticcheck // Legacy PIV compatibility requires PKCS#1 v1.5 support.
 		{name: "session key does not fit", opts: &rsa.PKCS1v15DecryptOptions{SessionKeyLen: 246}},   //nolint:staticcheck // Legacy PIV compatibility requires PKCS#1 v1.5 support.
-		{name: "short ciphertext", ciphertext: func(key *rsa.PublicKey) []byte { return make([]byte, key.Size()-1) }},
-		{name: "long ciphertext", ciphertext: func(key *rsa.PublicKey) []byte { return make([]byte, key.Size()+1) }},
-		{name: "ciphertext equals modulus", ciphertext: func(key *rsa.PublicKey) []byte { return key.N.Bytes() }},
+		{name: "short ciphertext", ciphertext: func(key *rsa.PublicKey) []byte { return make([]byte, key.Size()-1) }, want: rsa.ErrDecryption},
+		{name: "long ciphertext", ciphertext: func(key *rsa.PublicKey) []byte { return make([]byte, key.Size()+1) }, want: rsa.ErrDecryption},
+		{name: "ciphertext equals modulus", ciphertext: func(key *rsa.PublicKey) []byte { return key.N.Bytes() }, want: rsa.ErrDecryption},
 		{
 			name: "ciphertext greater than modulus",
 			ciphertext: func(key *rsa.PublicKey) []byte {
 				return new(big.Int).Add(key.N, big.NewInt(1)).Bytes()
 			},
+			want: rsa.ErrDecryption,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -210,6 +212,10 @@ func TestRSADecryptRejectsInvalidInputBeforeAuthentication(t *testing.T) {
 			plaintext, err := key.Decrypt(t.Context(), rand.Reader, ciphertext, tc.opts, authentication)
 			if err == nil || plaintext != nil || sourced != 0 || len(raw.instructions) != 0 {
 				t.Fatalf("Decrypt = %x, %v; source calls=%d, instructions=%x", plaintext, err, sourced, raw.instructions)
+			}
+
+			if tc.want != nil && !errors.Is(err, tc.want) {
+				t.Errorf("Decrypt error = %v, want %v", err, tc.want)
 			}
 		})
 	}

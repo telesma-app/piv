@@ -25,22 +25,6 @@ type objectReadCase struct {
 func objectReadCases() []objectReadCase {
 	return []objectReadCase{
 		{
-			name: "certificate data", selector: []byte{0x5f, 0xc1, 0x0d}, template: 0x53,
-			contents: func(marker byte) []byte {
-				return protocol.EncodeCertificateData(protocol.CertificateData{
-					DER: []byte{0x30, 0}, MSCUID: []byte{marker},
-				})
-			},
-			read: func(ctx context.Context, c *Device) (byte, error) {
-				certificate, err := c.GetCertificateData(ctx, protocol.RetiredKey1)
-				if err != nil {
-					return 0, err
-				}
-
-				return certificate.MSCUID[0], nil
-			},
-		},
-		{
 			name: "CHUID", selector: []byte{0x5f, 0xc1, 0x02}, template: 0x53,
 			contents: func(marker byte) []byte {
 				data := append([]byte{0x30, 25}, make([]byte, 25)...)

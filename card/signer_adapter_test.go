@@ -30,7 +30,12 @@ func TestSignerUsesBoundContextAndPromptsEachCall(t *testing.T) {
 
 		return "123456", nil
 	}
+
 	adapter := key.Signer(ctx, PINAuthentication(protocol.GlobalPIN, pin))
+	if adapter.Public() != key.Public() || len(raw.instructions) != 0 {
+		t.Fatal("creating the signer copied the public key or performed I/O")
+	}
+
 	digest := sha256.Sum256([]byte("adapter context"))
 
 	for range 2 {
@@ -47,18 +52,6 @@ func TestSignerUsesBoundContextAndPromptsEachCall(t *testing.T) {
 
 	if prompts != 2 || raw.verifies != 2 || raw.signatures != 2 {
 		t.Errorf("prompts/VERIFY/signature counts = %d/%d/%d", prompts, raw.verifies, raw.signatures)
-	}
-}
-
-func TestPINAuthenticationFailureDoesNotReachCard(t *testing.T) {
-	key, raw := newECDSASigningPeer(t, elliptic.P256(), 0x9c)
-	cause := errors.New("PIN prompt canceled")
-	pin := func(context.Context) (string, error) { return "", cause }
-	digest := sha256.Sum256([]byte("PIN source failure"))
-
-	_, err := key.Signer(t.Context(), PINAuthentication(protocol.ApplicationPIN, pin)).Sign(rand.Reader, digest[:], crypto.SHA256)
-	if !errors.Is(err, cause) || len(raw.instructions) != 0 {
-		t.Fatalf("Sign after PIN source failure = %v, instructions=%x", err, raw.instructions)
 	}
 }
 

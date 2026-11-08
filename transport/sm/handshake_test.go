@@ -11,7 +11,7 @@ import (
 	"github.com/telesma-app/piv/transport"
 )
 
-func TestOpenAndSequentialExchanges(t *testing.T) {
+func TestOpenEstablishesSession(t *testing.T) {
 	testCipherSuites(t, func(t *testing.T, suite cipherSuite) {
 		for _, encoding := range []iso7816.Encoding{iso7816.EncodingShort, iso7816.EncodingExtended} {
 			p := newHandshakePeer(t, suite)
@@ -25,27 +25,20 @@ func TestOpenAndSequentialExchanges(t *testing.T) {
 
 			t.Cleanup(func() { _ = channel.Close() })
 
-			for range 3 {
-				response, err := channel.Exchange(t.Context(), readCommand())
-				if err != nil || response.Status != 0x9000 || string(response.Data) != "public object" {
-					t.Fatalf("Exchange = %+v, %v", response, err)
-				}
-			}
-
-			if !channel.PIVSecureMessaging() || channel.session.counter[15] != 4 {
-				t.Fatal("session not active or counter did not advance")
+			if !channel.PIVSecureMessaging() || channel.session.counter != [16]byte{15: 1} {
+				t.Fatal("session not active or initial counter is incorrect")
 			}
 
 			if channel.session.keys.cfrm != [32]byte{} {
 				t.Fatal("key confirmation key retained in session")
 			}
 
-			if len(p.requests) != 5 || p.requests[0].INS != 0xa4 || p.requests[1].INS != 0x87 || p.requests[2].CLA != 0x0c {
-				t.Fatalf("requests = %+v", p.requests)
+			if len(p.requests) != 2 || p.requests[0].INS != 0xa4 || p.requests[1].INS != 0x87 {
+				t.Fatalf("Open requests = %+v, want SELECT and GENERAL AUTHENTICATE", p.requests)
 			}
 
-			if p.requests[2].Encoding != encoding || channel.session.keys.keySize != suite.keySize {
-				t.Fatalf("protected encoding/key size = %v/%d", p.requests[2].Encoding, channel.session.keys.keySize)
+			if channel.session.encoding != encoding || channel.session.keys.keySize != suite.keySize {
+				t.Fatalf("session encoding/key size = %v/%d, want %v/%d", channel.session.encoding, channel.session.keys.keySize, encoding, suite.keySize)
 			}
 		}
 	})
@@ -53,13 +46,30 @@ func TestOpenAndSequentialExchanges(t *testing.T) {
 
 func TestFailedOpenOwnership(t *testing.T) {
 	testCipherSuites(t, func(t *testing.T, suite cipherSuite) {
-		for _, mode := range []string{"encoding", "missing suite", "invalid suite", "unsupported", "rejected", "truncated", "truncated body", "control", "untrusted", "identity", "cryptogram"} {
-			t.Run(mode, func(t *testing.T) {
+		for _, tc := range []struct {
+			name        string
+			want        error
+			status      iso7816.StatusWord
+			exchanges   int
+			invalidates bool
+		}{
+			{name: "encoding"},
+			{name: "missing suite"},
+			{name: "invalid suite"},
+			{name: "unsupported", exchanges: 1},
+			{name: "rejected", status: 0x6a86, exchanges: 2},
+			{name: "truncated", want: ErrInvalidResponse, exchanges: 2, invalidates: true},
+			{name: "truncated body", want: ErrInvalidResponse, exchanges: 2, invalidates: true},
+			{name: "control", want: ErrAuthentication, exchanges: 2, invalidates: true},
+			{name: "untrusted", want: ErrAuthentication, exchanges: 2, invalidates: true},
+			{name: "identity", want: ErrAuthentication, exchanges: 2, invalidates: true},
+			{name: "cryptogram", want: ErrAuthentication, exchanges: 2, invalidates: true},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
 				p := newHandshakePeer(t, suite)
 				parameters := p.parameters()
-				invalidates := false
 
-				switch mode {
+				switch tc.name {
 				case "encoding":
 					parameters.Encoding = iso7816.EncodingAuto
 				case "missing suite":
@@ -79,13 +89,11 @@ func TestFailedOpenOwnership(t *testing.T) {
 					p.handshake = func(iso7816.Response) iso7816.Response {
 						return iso7816.Response{Data: []byte{0x7c, 0}, Status: 0x9000}
 					}
-					invalidates = true
 				case "truncated body":
 					p.handshake = func(iso7816.Response) iso7816.Response {
 						data := make([]byte, 1+suite.nonceSize+16)
 						return iso7816.Response{Data: bertlv.Append(nil, 0x7c, bertlv.Append(nil, 0x82, data)), Status: 0x9000}
 					}
-					invalidates = true
 				case "control":
 					p.handshake = func(r iso7816.Response) iso7816.Response {
 						_, _, cert, err := parseEstablishmentResponse(suite, r.Data)
@@ -99,10 +107,8 @@ func TestFailedOpenOwnership(t *testing.T) {
 
 						return r
 					}
-					invalidates = true
 				case "untrusted":
 					parameters.Trust.IssuerID[0] ^= 1
-					invalidates = true
 				case "identity":
 					p.handshake = func(r iso7816.Response) iso7816.Response {
 						_, _, cert, err := parseEstablishmentResponse(suite, r.Data)
@@ -119,7 +125,6 @@ func TestFailedOpenOwnership(t *testing.T) {
 
 						return r
 					}
-					invalidates = true
 				case "cryptogram":
 					p.handshake = func(r iso7816.Response) iso7816.Response {
 						nonce, cryptogram, cert, err := parseEstablishmentResponse(suite, r.Data)
@@ -136,7 +141,6 @@ func TestFailedOpenOwnership(t *testing.T) {
 
 						return r
 					}
-					invalidates = true
 				}
 
 				channel, err := Open(t.Context(), p, parameters)
@@ -144,22 +148,29 @@ func TestFailedOpenOwnership(t *testing.T) {
 					t.Fatalf("Open = %v, %v, want no channel", channel, err)
 				}
 
-				wantRequests := 2
-
-				switch mode {
-				case "encoding", "missing suite", "invalid suite":
-					wantRequests = 0
-				case "unsupported":
-					wantRequests = 1
+				if tc.want != nil && !errors.Is(err, tc.want) {
+					t.Errorf("Open error = %v, want %v", err, tc.want)
 				}
 
-				if len(p.requests) != wantRequests {
-					t.Fatalf("Open sent %d commands, want %d", len(p.requests), wantRequests)
+				if tc.status != 0 {
+					var apduError *iso7816.APDUError
+					if !errors.As(err, &apduError) || apduError.StatusWord() != tc.status {
+						t.Errorf("Open error = %v, want APDU status %s", err, tc.status)
+					}
+				}
+
+				if len(p.requests) != tc.exchanges {
+					t.Errorf("Open sent %d commands, want %d", len(p.requests), tc.exchanges)
+				}
+
+				wantCloses := 0
+				if tc.invalidates {
+					wantCloses = 1
 				}
 
 				var invalidated *transport.DeviceInvalidatedError
-				if errors.As(err, &invalidated) != invalidates || (p.closeCalls == 1) != invalidates {
-					t.Fatalf("Open = %v, closes=%d, want invalidated=%t", err, p.closeCalls, invalidates)
+				if errors.As(err, &invalidated) != tc.invalidates || p.closeCalls != wantCloses {
+					t.Fatalf("Open = %v, closes=%d; want invalidated=%t, closes=%d", err, p.closeCalls, tc.invalidates, wantCloses)
 				}
 			})
 		}

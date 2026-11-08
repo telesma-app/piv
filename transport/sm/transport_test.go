@@ -14,6 +14,42 @@ import (
 	"github.com/telesma-app/piv/transport"
 )
 
+func TestSequentialExchangesAdvanceSession(t *testing.T) {
+	testCipherSuites(t, func(t *testing.T, suite cipherSuite) {
+		for _, encoding := range []iso7816.Encoding{iso7816.EncodingShort, iso7816.EncodingExtended} {
+			p := newHandshakePeer(t, suite)
+			parameters := p.parameters()
+			parameters.Encoding = encoding
+
+			channel, err := Open(t.Context(), p, parameters)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			t.Cleanup(func() { _ = channel.Close() })
+
+			for range 3 {
+				response, err := channel.Exchange(t.Context(), readCommand())
+				if err != nil || response.Status != 0x9000 || string(response.Data) != "public object" {
+					t.Fatalf("Exchange = %+v, %v", response, err)
+				}
+			}
+
+			if !channel.PIVSecureMessaging() || channel.session.counter[15] != 4 {
+				t.Fatal("session not active or counter did not advance")
+			}
+
+			if len(p.requests) != 5 || p.requests[2].CLA != 0x0c {
+				t.Fatalf("requests = %+v", p.requests)
+			}
+
+			if p.requests[2].Encoding != encoding {
+				t.Fatalf("protected encoding = %v, want %v", p.requests[2].Encoding, encoding)
+			}
+		}
+	})
+}
+
 func TestAuthenticatedErrorPreservesSession(t *testing.T) {
 	testCipherSuites(t, func(t *testing.T, suite cipherSuite) {
 		p := newHandshakePeer(t, suite)
@@ -37,13 +73,23 @@ func TestAuthenticatedErrorPreservesSession(t *testing.T) {
 
 func TestExchangeInvalidatesAndClears(t *testing.T) {
 	testCipherSuites(t, func(t *testing.T, suite cipherSuite) {
-		for _, mode := range []string{"bare status", "bad MAC", "I/O", "interrupted", "exhausted"} {
-			t.Run(mode, func(t *testing.T) {
+		cause := errors.New("lost response")
+		for _, tc := range []struct {
+			name      string
+			want      error
+			exchanges int
+		}{
+			{name: "bare status", want: ErrInvalidResponse, exchanges: 1},
+			{name: "bad MAC", want: ErrAuthentication, exchanges: 1},
+			{name: "I/O", want: cause, exchanges: 1},
+			{name: "interrupted", want: context.Canceled, exchanges: 1},
+			{name: "exhausted", want: ErrSessionExhausted},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
 				p := newHandshakePeer(t, suite)
 				channel := openHandshakePeer(t, p)
-				cause := errors.New("lost response")
 				p.effect = func(context.Context, iso7816.Command) (iso7816.Response, error) {
-					switch mode {
+					switch tc.name {
 					case "bare status":
 						return iso7816.Response{Status: 0x6988}, nil
 					case "bad MAC":
@@ -58,22 +104,38 @@ func TestExchangeInvalidatesAndClears(t *testing.T) {
 					}
 				}
 
-				if mode == "exhausted" {
+				if tc.name == "exhausted" {
 					channel.session.counter = [16]byte{}
 				}
 
+				calls := len(p.requests)
 				response, err := channel.Exchange(t.Context(), readCommand())
 
 				var invalidated *transport.DeviceInvalidatedError
-				if !errors.As(err, &invalidated) || len(response.Data) != 0 || p.closeCalls != 1 {
-					t.Fatalf("Exchange = %+v, %v, closes=%d", response, err, p.closeCalls)
+				if !errors.As(err, &invalidated) || !errors.Is(err, tc.want) {
+					t.Fatalf("Exchange = %v, want invalidation preserving %v", err, tc.want)
+				}
+
+				if tc.name == "bare status" {
+					var apduError *iso7816.APDUError
+					if !errors.As(err, &apduError) || apduError.StatusWord() != 0x6988 {
+						t.Errorf("Exchange = %v, want underlying APDU status 6988", err)
+					}
+				}
+
+				if response.Data != nil || response.Status != 0 {
+					t.Errorf("failed Exchange returned response %+v", response)
+				}
+
+				if len(p.requests) != calls+tc.exchanges || p.closeCalls != 1 {
+					t.Errorf("exchanges=%d closes=%d, want %d exchanges and one close", len(p.requests)-calls, p.closeCalls, tc.exchanges)
 				}
 
 				if channel.PIVSecureMessaging() || channel.session.keys != (sessionKeys{}) {
 					t.Fatal("invalidated session retained keys or remained open")
 				}
 
-				calls := len(p.requests)
+				calls = len(p.requests)
 				if _, err := channel.Exchange(t.Context(), readCommand()); !errors.Is(err, io.ErrClosedPipe) || len(p.requests) != calls {
 					t.Fatalf("Exchange after invalidation = %v", err)
 				}
@@ -105,6 +167,177 @@ func TestCancellationBeforeIOPreservesState(t *testing.T) {
 
 		if _, err := channel.Exchange(t.Context(), readCommand()); err != nil {
 			t.Fatal(err)
+		}
+	})
+}
+
+func TestQueuedExchangeCancellationPreservesActiveSession(t *testing.T) {
+	testCipherSuites(t, func(t *testing.T, suite cipherSuite) {
+		for _, tc := range []struct {
+			name string
+			ctx  func(context.Context) (context.Context, context.CancelFunc)
+			want error
+		}{
+			{name: "canceled", ctx: context.WithCancel, want: context.Canceled},
+			{
+				name: "deadline",
+				ctx: func(parent context.Context) (context.Context, context.CancelFunc) {
+					return context.WithTimeout(parent, 10*time.Millisecond)
+				},
+				want: context.DeadlineExceeded,
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					p := newHandshakePeer(t, suite)
+					channel := openHandshakePeer(t, p)
+					activeCtx, cancelActive := context.WithCancel(t.Context())
+					released := make(chan struct{})
+					release := sync.OnceFunc(func() { close(released) })
+
+					var workers sync.WaitGroup
+
+					defer func() {
+						cancelActive()
+						release()
+
+						done := make(chan struct{})
+
+						go func() {
+							_ = channel.Close()
+
+							workers.Wait()
+							close(done)
+						}()
+
+						select {
+						case <-done:
+						case <-time.After(time.Second):
+							t.Fatal("workers did not stop during cleanup")
+						}
+					}()
+
+					p.effect = func(ctx context.Context, _ iso7816.Command) (iso7816.Response, error) {
+						select {
+						case <-released:
+							return p.protectedResponse([]byte("active response"), 0x9000), nil
+						case <-ctx.Done():
+							return iso7816.Response{}, ctx.Err()
+						case <-p.closed:
+							return iso7816.Response{}, io.ErrClosedPipe
+						}
+					}
+
+					type result struct {
+						response iso7816.Response
+						err      error
+					}
+
+					active := make(chan result, 1)
+
+					workers.Go(func() {
+						response, err := channel.Exchange(activeCtx, readCommand())
+						active <- result{response: response, err: err}
+					})
+
+					synctest.Wait()
+
+					if len(p.requests) != 3 {
+						t.Fatalf("active Exchange did not reach I/O: requests=%d, want 3", len(p.requests))
+					}
+
+					select {
+					case got := <-active:
+						t.Fatalf("active Exchange completed before release: %+v", got)
+					default:
+					}
+
+					before := channel.session
+					calls := len(p.requests)
+
+					queuedCtx, cancelQueued := tc.ctx(t.Context())
+					defer cancelQueued()
+
+					queued := make(chan result, 1)
+
+					workers.Go(func() {
+						response, err := channel.Exchange(queuedCtx, readCommand())
+						queued <- result{response: response, err: err}
+					})
+
+					synctest.Wait()
+
+					if queuedCtx.Err() != nil {
+						t.Fatalf("queued context ended before cancellation phase: %v", queuedCtx.Err())
+					}
+
+					select {
+					case got := <-queued:
+						t.Fatalf("queued Exchange completed before cancellation: %+v", got)
+					default:
+					}
+
+					if len(p.requests) != calls {
+						t.Fatal("queued Exchange performed I/O before cancellation")
+					}
+
+					if tc.want == context.Canceled {
+						cancelQueued()
+					}
+
+					select {
+					case got := <-queued:
+						var invalidated *transport.DeviceInvalidatedError
+						if !errors.Is(got.err, tc.want) || errors.As(got.err, &invalidated) || got.response.Data != nil || got.response.Status != 0 {
+							t.Fatalf("queued Exchange = %+v, want cancellation without invalidation or response", got)
+						}
+					case <-time.After(time.Second):
+						t.Fatal("queued Exchange waited for active Exchange after cancellation")
+					}
+
+					if len(p.requests) != calls || p.closeCalls != 0 || channel.session != before || !channel.PIVSecureMessaging() {
+						t.Fatal("queued cancellation performed I/O, closed the connection or changed session state")
+					}
+
+					select {
+					case got := <-active:
+						t.Fatalf("queued cancellation completed active Exchange before release: %+v", got)
+					default:
+					}
+
+					release()
+
+					select {
+					case got := <-active:
+						if got.err != nil || got.response.Status != 0x9000 || string(got.response.Data) != "active response" {
+							t.Fatalf("active Exchange after queued cancellation = %+v", got)
+						}
+					case <-time.After(time.Second):
+						t.Fatal("active Exchange did not finish after release")
+					}
+
+					p.effect = nil
+					reused := make(chan result, 1)
+
+					workers.Go(func() {
+						response, err := channel.Exchange(t.Context(), readCommand())
+						reused <- result{response: response, err: err}
+					})
+
+					select {
+					case got := <-reused:
+						if got.err != nil || got.response.Status != 0x9000 || string(got.response.Data) != "public object" {
+							t.Fatalf("Exchange after queued cancellation = %+v", got)
+						}
+					case <-time.After(time.Second):
+						t.Fatal("Exchange after queued cancellation did not finish")
+					}
+
+					if len(p.requests) != calls+1 || p.closeCalls != 0 || !channel.PIVSecureMessaging() || channel.session.counter != [16]byte{15: 3} {
+						t.Fatalf("session after reuse: requests=%d closes=%d counter=%x", len(p.requests), p.closeCalls, channel.session.counter)
+					}
+				})
+			})
 		}
 	})
 }
