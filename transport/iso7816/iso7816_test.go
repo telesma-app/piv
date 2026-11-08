@@ -220,7 +220,7 @@ func TestExchangeHonorsExplicitExtendedEncodingWithoutChaining(t *testing.T) {
 	}
 }
 
-func TestSecureExchangeCollectsResponseUsingPlainCLA(t *testing.T) {
+func TestExchangeCollectsResponseUsingPlainCLA(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		cla      byte
@@ -230,6 +230,8 @@ func TestSecureExchangeCollectsResponseUsingPlainCLA(t *testing.T) {
 		{name: "extended", cla: 0x04, encoding: baseiso7816.EncodingExtended},
 		{name: "vendor short", cla: 0x84, encoding: baseiso7816.EncodingShort},
 		{name: "vendor extended", cla: 0x84, encoding: baseiso7816.EncodingExtended},
+		{name: "proprietary short", cla: 0x80, encoding: baseiso7816.EncodingShort},
+		{name: "proprietary extended", cla: 0x80, encoding: baseiso7816.EncodingExtended},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			data := bytes.Repeat([]byte{0xa5}, 24)
