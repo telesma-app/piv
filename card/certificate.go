@@ -18,10 +18,11 @@ import (
 // bytes when object decoding succeeds; Certificate is nil if X.509 parsing
 // fails. The parsed certificate and DER share the same bytes. Neither proves
 // that the slot contains a matching private key or that the certificate is
-// trusted.
+// trusted. MSCUID preserves the optional legacy identifier from retired slots.
 type Certificate struct {
 	Key         protocol.KeyReference
 	DER         []byte
+	MSCUID      []byte
 	Certificate *x509.Certificate
 }
 
@@ -49,12 +50,12 @@ func (d *Device) Certificates(ctx context.Context) iter.Seq2[Certificate, error]
 		}
 
 		for _, key := range keys {
-			der, err := d.GetCertificateDER(ctx, key)
-			entry := Certificate{Key: key, DER: der}
+			data, err := d.GetCertificateData(ctx, key)
+			entry := Certificate{Key: key, DER: data.DER, MSCUID: data.MSCUID}
 
 			stop := err != nil && !certificateReadCanContinue(err)
 			if err == nil {
-				entry.Certificate, err = x509.ParseCertificate(der)
+				entry.Certificate, err = x509.ParseCertificate(data.DER)
 				if err != nil {
 					err = fmt.Errorf("%w: certificate DER: %v", protocol.ErrInvalidResponse, err)
 				}

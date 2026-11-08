@@ -9,7 +9,8 @@ import (
 
 // CHUID contains the Card Holder Unique Identifier data object (SP 800-73-5
 // Part 1, Sec. 3.1.2 and Table 10). FASCN is the encoded 25-byte FASC-N, without
-// decoding its components. ExpirationDate is a calendar date at midnight UTC.
+// decoding its components; ParseFASCN decodes them separately. ExpirationDate
+// is a calendar date at midnight UTC.
 //
 // Raw preserves the exact encoded object contents, including unknown fields
 // and original BER length encodings, for interpreting signed content.

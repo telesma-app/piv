@@ -67,6 +67,23 @@ func TestGetCertificateDERMapsAllSlots(t *testing.T) {
 	}
 }
 
+func TestGetCertificateDataPreservesMSCUID(t *testing.T) {
+	contents := []byte{0x70, 2, 0x30, 0, 0x71, 1, 0, 0x72, 3, 'o', 'l', 'd', 0xfe, 0}
+	c := NewClient(newScript(t, exchangeStep{
+		command:  []byte{0, 0xcb, 0x3f, 0xff, 5, 0x5c, 3, 0x5f, 0xc1, 0x0d, 0},
+		response: iso7816.Response{Status: 0x9000, Data: bertlv.Append(nil, 0x53, contents)},
+	}))
+
+	got, err := c.GetCertificateData(t.Context(), protocol.RetiredKey1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(got.DER, []byte{0x30, 0}) || string(got.MSCUID) != "old" {
+		t.Errorf("certificate = %+v, want opaque DER 3000 and MSCUID old", got)
+	}
+}
+
 func TestGetCertificateDERDecodesCertificate(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {

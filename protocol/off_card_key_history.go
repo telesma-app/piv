@@ -2,8 +2,54 @@ package protocol
 
 import (
 	"encoding/asn1"
+	"encoding/hex"
 	"fmt"
+	"net"
+	"strings"
 )
+
+// ParseOffCardCertURL extracts the SHA-256 digest from the Key History object's
+// offCardCertURL (SP 800-73-5 Part 1, Sec. 3.3.3 and Table 20). The URL must be
+// http://<DNS name>/<64 ASCII hexadecimal digits>, within the field's 118-byte
+// limit. This does not authenticate the URL or retrieve its contents.
+func ParseOffCardCertURL(value string) ([32]byte, error) {
+	var digest [32]byte
+
+	scheme, address, ok := strings.Cut(value, "://")
+	if !ok || !strings.EqualFold(scheme, "http") || len(value) > 118 {
+		return digest, fmt.Errorf("%w: invalid off-card certificate URL", ErrInvalidResponse)
+	}
+
+	host, encoded, ok := strings.Cut(address, "/")
+	if !ok || host == "" || len(encoded) != hex.EncodedLen(len(digest)) {
+		return digest, fmt.Errorf("%w: invalid off-card certificate URL", ErrInvalidResponse)
+	}
+
+	name := strings.TrimSuffix(host, ".")
+	if net.ParseIP(name) != nil {
+		return digest, fmt.Errorf("%w: off-card certificate URL requires a DNS name", ErrInvalidResponse)
+	}
+
+	for label := range strings.SplitSeq(name, ".") {
+		if len(label) == 0 || label[0] == '-' || label[len(label)-1] == '-' {
+			return digest, fmt.Errorf("%w: invalid off-card certificate DNS name", ErrInvalidResponse)
+		}
+
+		for _, b := range []byte(label) {
+			if b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '-' {
+				continue
+			}
+
+			return digest, fmt.Errorf("%w: invalid off-card certificate DNS name", ErrInvalidResponse)
+		}
+	}
+
+	if _, err := hex.Decode(digest[:], []byte(encoded)); err != nil {
+		return [32]byte{}, fmt.Errorf("%w: invalid off-card certificate SHA-256 digest: %v", ErrInvalidResponse, err)
+	}
+
+	return digest, nil
+}
 
 // OffCardCertificate associates a retired key reference with its certificate.
 // DER contains the complete certificate SEQUENCE and borrows the parsed file.
@@ -16,7 +62,9 @@ type OffCardCertificate struct {
 // (SP 800-73-5 Part 1, Sec. 3.3.3). Entries retain their file order and must have
 // distinct retired key references. The parser checks the file schema and DER
 // framing without parsing X.509 contents.
-// Retrieval and verification of the file's URL hash belong to the caller.
+// Retrieval and verification of the URL's SHA-256 digest are separate from
+// parsing. ParseOffCardCertURL extracts the expected digest; the credential
+// package verifies it against the retrieved file.
 func ParseOffCardKeyHistoryFile(data []byte) ([]OffCardCertificate, error) {
 	file, rest, err := offCardSequence(data)
 	if err != nil {

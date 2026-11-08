@@ -15,19 +15,19 @@ import (
 	"github.com/telesma-app/piv/transport"
 )
 
-func establish(ctx context.Context, connection transport.Device, parameters Parameters, suite cipherSuite) (sessionKeys, protocol.ApplicationPropertyTemplate, error) {
+func establish(ctx context.Context, connection transport.Device, parameters Parameters, suite cipherSuite) (sessionKeys, protocol.ApplicationPropertyTemplate, CardCertificate, error) {
 	response, err := connection.Exchange(ctx, protocol.SelectCommand())
 	if err != nil {
-		return sessionKeys{}, protocol.ApplicationPropertyTemplate{}, err
+		return sessionKeys{}, protocol.ApplicationPropertyTemplate{}, CardCertificate{}, err
 	}
 
 	if err := response.APDUError(); err != nil {
-		return sessionKeys{}, protocol.ApplicationPropertyTemplate{}, fmt.Errorf("sm: SELECT PIV: %w", err)
+		return sessionKeys{}, protocol.ApplicationPropertyTemplate{}, CardCertificate{}, fmt.Errorf("sm: SELECT PIV: %w", err)
 	}
 
 	application, err := protocol.ParseApplicationPropertyTemplate(response.Data)
 	if err != nil {
-		return sessionKeys{}, protocol.ApplicationPropertyTemplate{}, err
+		return sessionKeys{}, protocol.ApplicationPropertyTemplate{}, CardCertificate{}, err
 	}
 
 	// Retain borrowed SELECT fields before the connection reuses response storage.
@@ -35,38 +35,38 @@ func establish(ctx context.Context, connection transport.Device, parameters Para
 	application.TagAllocationAuthorityAID = bytes.Clone(application.TagAllocationAuthorityAID)
 
 	if !slices.Contains(application.Algorithms, suite.algorithm) {
-		return sessionKeys{}, protocol.ApplicationPropertyTemplate{}, fmt.Errorf("sm: selected PIV application does not advertise cipher suite %02X", byte(suite.algorithm))
+		return sessionKeys{}, protocol.ApplicationPropertyTemplate{}, CardCertificate{}, fmt.Errorf("sm: selected PIV application does not advertise cipher suite %02X", byte(suite.algorithm))
 	}
 
 	ephemeral, err := suite.curve.GenerateKey(rand.Reader)
 	if err != nil {
-		return sessionKeys{}, protocol.ApplicationPropertyTemplate{}, err
+		return sessionKeys{}, protocol.ApplicationPropertyTemplate{}, CardCertificate{}, err
 	}
 
 	public := ephemeral.PublicKey().Bytes()
 
 	response, err = connection.Exchange(ctx, establishmentCommand(suite, parameters.HostID, public))
 	if err != nil {
-		return sessionKeys{}, protocol.ApplicationPropertyTemplate{}, err
+		return sessionKeys{}, protocol.ApplicationPropertyTemplate{}, CardCertificate{}, err
 	}
 
 	if err := response.APDUError(); err != nil {
-		return sessionKeys{}, protocol.ApplicationPropertyTemplate{}, fmt.Errorf("sm: GENERAL AUTHENTICATE: %w", err)
+		return sessionKeys{}, protocol.ApplicationPropertyTemplate{}, CardCertificate{}, fmt.Errorf("sm: GENERAL AUTHENTICATE: %w", err)
 	}
 
 	nonce, cryptogram, certificate, err := parseEstablishmentResponse(suite, response.Data)
 	if err != nil {
-		return sessionKeys{}, protocol.ApplicationPropertyTemplate{}, invalidHandshake(err)
+		return sessionKeys{}, protocol.ApplicationPropertyTemplate{}, CardCertificate{}, invalidHandshake(err)
 	}
 
 	peer, err := verifyCertificate(suite, certificate, parameters.Trust)
 	if err != nil {
-		return sessionKeys{}, protocol.ApplicationPropertyTemplate{}, invalidHandshake(err)
+		return sessionKeys{}, protocol.ApplicationPropertyTemplate{}, CardCertificate{}, invalidHandshake(err)
 	}
 
-	z, err := ephemeral.ECDH(peer)
+	z, err := ephemeral.ECDH(peer.PublicKey)
 	if err != nil {
-		return sessionKeys{}, protocol.ApplicationPropertyTemplate{}, invalidHandshake(err)
+		return sessionKeys{}, protocol.ApplicationPropertyTemplate{}, CardCertificate{}, invalidHandshake(err)
 	}
 	defer clear(z)
 
@@ -82,10 +82,13 @@ func establish(ctx context.Context, connection transport.Device, parameters Para
 
 	if subtle.ConstantTimeCompare(expected[:], cryptogram) != 1 {
 		keys.clear()
-		return sessionKeys{}, protocol.ApplicationPropertyTemplate{}, invalidHandshake(ErrAuthentication)
+		return sessionKeys{}, protocol.ApplicationPropertyTemplate{}, CardCertificate{}, invalidHandshake(ErrAuthentication)
 	}
 
-	return keys, application, nil
+	// The authenticated CVC is retained after later exchanges reuse response storage.
+	peer.Raw = bytes.Clone(peer.Raw)
+
+	return keys, application, peer, nil
 }
 
 func establishmentCommand(suite cipherSuite, hostID [8]byte, public []byte) iso7816.Command {

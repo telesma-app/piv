@@ -22,6 +22,17 @@ var (
 	oidExtendedUsage  = asn1.ObjectIdentifier{2, 5, 29, 37}
 )
 
+// CardCertificate contains the card identity authenticated during Open. GUID is
+// the 16-byte Card UUID in the CVC Subject Identifier (SP 800-73-5 Part 2,
+// Table 19). PublicKey is the card's static ECDH key, whose possession is proved
+// by key confirmation. Raw is the exact BER-TLV CVC, including tag 7F21 and its
+// original length encoding.
+type CardCertificate struct {
+	Raw       []byte
+	GUID      [16]byte
+	PublicKey *ecdh.PublicKey
+}
+
 // Trust identifies a signer obtained from a trusted source, not from the
 // unauthenticated handshake. IssuerID is the leftmost eight bytes of the
 // signer's X.509 subjectKeyIdentifier. PublicKey is a P-256 (CS2) or P-384 (CS7)
@@ -136,10 +147,10 @@ type certificate struct {
 	signature  []byte
 }
 
-func verifyCertificate(suite cipherSuite, raw []byte, trust Trust) (*ecdh.PublicKey, error) {
+func verifyCertificate(suite cipherSuite, raw []byte, trust Trust) (CardCertificate, error) {
 	card, err := parseCertificate(suite, raw, false)
 	if err != nil {
-		return nil, err
+		return CardCertificate{}, err
 	}
 
 	issuer := trust.IssuerID
@@ -148,36 +159,36 @@ func verifyCertificate(suite cipherSuite, raw []byte, trust Trust) (*ecdh.Public
 	if len(trust.IntermediateCVC) != 0 {
 		intermediate, err := parseCertificate(suite, trust.IntermediateCVC, true)
 		if err != nil {
-			return nil, err
+			return CardCertificate{}, err
 		}
 
 		if intermediate.issuer != issuer {
-			return nil, fmt.Errorf("%w: intermediate CVC issuer mismatch", ErrAuthentication)
+			return CardCertificate{}, fmt.Errorf("%w: intermediate CVC issuer mismatch", ErrAuthentication)
 		}
 
 		if err := intermediate.verify(suite, key, true); err != nil {
-			return nil, err
+			return CardCertificate{}, err
 		}
 
 		copy(issuer[:], intermediate.subject)
 
 		public, err := ecdsa.ParseUncompressedPublicKey(suite.signingCurve, intermediate.publicKey.Bytes())
 		if err != nil {
-			return nil, fmt.Errorf("%w: intermediate public key: %v", ErrAuthentication, err)
+			return CardCertificate{}, fmt.Errorf("%w: intermediate public key: %v", ErrAuthentication, err)
 		}
 
 		key = public
 	}
 
 	if card.issuer != issuer {
-		return nil, fmt.Errorf("%w: card CVC issuer mismatch", ErrAuthentication)
+		return CardCertificate{}, fmt.Errorf("%w: card CVC issuer mismatch", ErrAuthentication)
 	}
 
 	if err := card.verify(suite, key, false); err != nil {
-		return nil, err
+		return CardCertificate{}, err
 	}
 
-	return card.publicKey, nil
+	return CardCertificate{Raw: raw, GUID: [16]byte(card.subject), PublicKey: card.publicKey}, nil
 }
 
 func (c certificate) verify(suite cipherSuite, key crypto.PublicKey, intermediate bool) error {

@@ -148,17 +148,25 @@ func (c *Client) GetCertificate(ctx context.Context, key protocol.KeyReference) 
 // when needed. It does not parse or validate the X.509 certificate, so bytes
 // remain available even when GetCertificate cannot parse them.
 func (c *Client) GetCertificateDER(ctx context.Context, key protocol.KeyReference) ([]byte, error) {
+	certificate, err := c.GetCertificateData(ctx, key)
+	return certificate.DER, err
+}
+
+// GetCertificateData reads a slot's certificate object, decompressing its DER
+// and preserving any legacy MSCUID from a retired key-management certificate.
+// It does not parse X.509 contents or establish trust.
+func (c *Client) GetCertificateData(ctx context.Context, key protocol.KeyReference) (protocol.CertificateData, error) {
 	object, err := protocol.CertificateObject(key)
 	if err != nil {
-		return nil, err
+		return protocol.CertificateData{}, err
 	}
 
 	data, err := c.GetData(ctx, object)
 	if err != nil {
-		return nil, err
+		return protocol.CertificateData{}, err
 	}
 
-	return protocol.DecodeCertificate(data)
+	return protocol.ParseCertificateData(data)
 }
 
 // GetKeyHistory reads the retired key management metadata. An absent object is

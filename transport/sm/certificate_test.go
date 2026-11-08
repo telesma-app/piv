@@ -122,8 +122,8 @@ func TestCertificateAuthenticatesExactSignedBytes(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if !bytes.Equal(got.Bytes(), card.PublicKey().Bytes()) {
-			t.Errorf("verified public key = %x, want %x", got.Bytes(), card.PublicKey().Bytes())
+		if !bytes.Equal(got.PublicKey.Bytes(), card.PublicKey().Bytes()) {
+			t.Errorf("verified public key = %x, want %x", got.PublicKey.Bytes(), card.PublicKey().Bytes())
 		}
 	})
 }
@@ -159,7 +159,7 @@ func TestCertificateRejectsTamperingAndWrongTrust(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got, err := verifyCertificate(testCipherSuite(t, protocol.CipherSuite7), test.input, test.trust)
-			if got != nil || !errors.Is(err, test.want) {
+			if got.PublicKey != nil || got.Raw != nil || got.GUID != [16]byte{} || !errors.Is(err, test.want) {
 				t.Errorf("verify = %v, %v, want %v", got, err, test.want)
 			}
 		})
@@ -394,7 +394,8 @@ func TestIntermediateCertificateTrust(t *testing.T) {
 		body := certificateBody(issuer, identifier[:8], point, 0x12)
 		body = append([]byte{0x5f, 0x29, 0x81, 1}, body[3:]...)
 		intermediate := signCertificate(t, body, root, true)
-		raw := fixtureCertificate(t, card.PublicKey(), signer, [8]byte(identifier[:8]))
+		guid := [16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
+		raw := signCertificate(t, certificateBody([8]byte(identifier[:8]), guid[:], card.PublicKey().Bytes(), 0), signer, false)
 
 		caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		if err != nil {
@@ -454,8 +455,12 @@ func TestIntermediateCertificateTrust(t *testing.T) {
 		}
 
 		got, err := verifyCertificate(suite, raw, trust)
-		if err != nil || got == nil || !bytes.Equal(got.Bytes(), card.PublicKey().Bytes()) {
+		if err != nil || got.PublicKey == nil || !bytes.Equal(got.PublicKey.Bytes(), card.PublicKey().Bytes()) {
 			t.Fatalf("verify with intermediate = %v, %v", got, err)
+		}
+
+		if got.GUID != guid || !bytes.Equal(got.Raw, raw) {
+			t.Fatalf("verified card identity = %+v, want GUID %x, CVC %x", got, guid, raw)
 		}
 
 		for _, test := range []struct {

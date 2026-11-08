@@ -93,6 +93,8 @@ func run(ctx context.Context, reader, caFile, intermediateFile string) (err erro
 		return err
 	}
 
+	identity := channel.CardCertificate()
+
 	// The channel now owns the connection; Device takes ownership of the channel.
 	device := card.New(channel)
 	closeSession = device.Close
@@ -102,7 +104,7 @@ func run(ctx context.Context, reader, caFile, intermediateFile string) (err erro
 		return err
 	}
 
-	_, err = fmt.Printf("CS7 protected CCC: %d bytes\n", len(data))
+	_, err = fmt.Printf("Authenticated card GUID: %x\nCS7 protected CCC: %d bytes\n", identity.GUID, len(data))
 
 	return err
 }

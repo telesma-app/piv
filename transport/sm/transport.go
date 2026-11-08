@@ -29,6 +29,7 @@ type Parameters struct {
 type Transport struct {
 	connection  transport.Device
 	application protocol.ApplicationPropertyTemplate
+	certificate CardCertificate
 	session     recordSession
 	mu          chan struct{}
 	cryptoMu    sync.Mutex
@@ -58,7 +59,7 @@ func Open(ctx context.Context, connection transport.Device, parameters Parameter
 		return nil, err
 	}
 
-	keys, application, err := establish(ctx, connection, parameters, suite)
+	keys, application, certificate, err := establish(ctx, connection, parameters, suite)
 	if err != nil {
 		var invalidated *transport.DeviceInvalidatedError
 		if errors.As(err, &invalidated) {
@@ -72,6 +73,7 @@ func Open(ctx context.Context, connection transport.Device, parameters Parameter
 	return &Transport{
 		connection:  connection,
 		application: application,
+		certificate: certificate,
 		session:     newRecordSession(keys, parameters.Encoding),
 		mu:          make(chan struct{}, 1),
 		closed:      make(chan struct{}),
@@ -82,6 +84,13 @@ func Open(ctx context.Context, connection transport.Device, parameters Parameter
 // channel without I/O. Its slices are read-only and remain available after Close.
 func (t *Transport) ApplicationProperties() protocol.ApplicationPropertyTemplate {
 	return t.application
+}
+
+// CardCertificate returns the card identity authenticated by Open without I/O.
+// Its Raw bytes are read-only. The snapshot is independent of the connection's
+// response buffers and remains available after Close.
+func (t *Transport) CardCertificate() CardCertificate {
+	return t.certificate
 }
 
 func invalidHandshake(err error) error {

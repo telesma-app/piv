@@ -22,5 +22,5 @@ func ParseSecureMessagingCertificateSigner(data []byte) (SecureMessagingCertific
 		return SecureMessagingCertificateSigner{}, err
 	}
 
-	return SecureMessagingCertificateSigner{CertificateDER: certificate, IntermediateCVC: intermediateCVC}, nil
+	return SecureMessagingCertificateSigner{CertificateDER: certificate.DER, IntermediateCVC: intermediateCVC}, nil
 }

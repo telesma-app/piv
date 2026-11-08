@@ -271,6 +271,29 @@ func TestCertificatesIsLazyAndStopsAtBreak(t *testing.T) {
 	}
 }
 
+func TestCertificatesPreservesRetiredMSCUID(t *testing.T) {
+	steps := absentCertificateSteps()
+	contents := []byte{0x70, 2, 0x30, 0, 0x71, 1, 0, 0x72, 3, 'o', 'l', 'd', 0xfe, 0}
+	steps[4].response = iso7816.Response{Status: 0x9000, Data: readTLV(0x53, contents)}
+	d, _ := newDevice(t, steps...)
+
+	var count int
+	for entry, err := range d.Certificates(t.Context()) {
+		count++
+
+		if entry.Key == protocol.RetiredKey1 {
+			if !errors.Is(err, protocol.ErrInvalidResponse) || entry.Certificate != nil ||
+				!bytes.Equal(entry.DER, []byte{0x30, 0}) || string(entry.MSCUID) != "old" {
+				t.Errorf("retired certificate = %+v, %v; want preserved DER/MSCUID despite invalid X.509", entry, err)
+			}
+		}
+	}
+
+	if count != 24 {
+		t.Errorf("certificate count = %d, want 24", count)
+	}
+}
+
 func TestCertificatesReleasesGateBeforeYield(t *testing.T) {
 	der := readCertificateDER(t)
 	synctest.Test(t, func(t *testing.T) {

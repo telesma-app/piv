@@ -29,7 +29,8 @@ var (
 	// ErrAuthentication reports invalid signatures, untrusted signers, expired
 	// cards, or signed credential identifiers that do not match.
 	ErrAuthentication = errors.New("piv: credential authentication failed")
-	// ErrIntegrity reports an absent or altered data group.
+	// ErrIntegrity reports an absent or altered data group or an off-card key
+	// history file whose digest does not match its authenticated URL.
 	ErrIntegrity = errors.New("piv: data-group integrity check failed")
 
 	oidContentSigning = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 6, 7}

@@ -30,6 +30,7 @@ func EncodeKeyHistory(history KeyHistory) []byte {
 // ParseKeyHistory parses a Key History object value without its outer 0x53
 // wrapper (SP 800-73-5 Part 1, Sec. 3.3.3 and Table 20). Unknown fields are
 // ignored. The URL is retained as an opaque ASCII value for the caller.
+// ParseOffCardCertURL extracts its required SHA-256 digest.
 func ParseKeyHistory(data []byte) (KeyHistory, error) {
 	var (
 		history                                   KeyHistory

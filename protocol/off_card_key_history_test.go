@@ -3,10 +3,81 @@ package protocol
 import (
 	"bytes"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/telesma-app/bertlv"
 )
+
+func TestParseOffCardCertURL(t *testing.T) {
+	const encoded = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+
+	want := [32]byte{
+		0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea,
+		0x41, 0x41, 0x40, 0xde, 0x5d, 0xae, 0x22, 0x23,
+		0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c,
+		0xb4, 0x10, 0xff, 0x61, 0xf2, 0x00, 0x15, 0xad,
+	}
+
+	for _, value := range []string{
+		"http://example.test/" + encoded,
+		"HTTP://EXAMPLE.test/" + strings.ToUpper(encoded),
+		"http://example.test./" + encoded,
+		"http://1-example.test/" + encoded,
+		"http://" + strings.Repeat("a", 41) + ".test/" + encoded,
+	} {
+		t.Run(value, func(t *testing.T) {
+			got, err := ParseOffCardCertURL(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got != want {
+				t.Errorf("digest = %x, want %x", got, want)
+			}
+		})
+	}
+}
+
+func TestParseOffCardCertURLRejectsInvalidData(t *testing.T) {
+	const (
+		digest = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+		valid  = "http://example.test/" + digest
+	)
+
+	for _, test := range []struct {
+		name  string
+		value string
+	}{
+		{name: "empty"},
+		{name: "HTTPS", value: "https://example.test/" + digest},
+		{name: "relative URL", value: "example.test/" + digest},
+		{name: "missing digest", value: "http://example.test"},
+		{name: "missing host", value: "http:///" + digest},
+		{name: "IPv4 address", value: "http://192.0.2.1/" + digest},
+		{name: "IPv6 address", value: "http://[2001:db8::1]/" + digest},
+		{name: "port", value: "http://example.test:80/" + digest},
+		{name: "user information", value: "http://user@example.test/" + digest},
+		{name: "empty DNS label", value: "http://example..test/" + digest},
+		{name: "leading DNS hyphen", value: "http://-example.test/" + digest},
+		{name: "trailing DNS hyphen", value: "http://example-.test/" + digest},
+		{name: "invalid DNS character", value: "http://example_test/" + digest},
+		{name: "non-ASCII DNS name", value: "http://é.test/" + digest},
+		{name: "oversized URL", value: "http://" + strings.Repeat("a", 42) + ".test/" + digest},
+		{name: "short digest", value: valid[:len(valid)-1]},
+		{name: "nonhex digest", value: "http://example.test/g" + digest[1:]},
+		{name: "escaped digest", value: "http://example.test/%62" + digest[1:]},
+		{name: "additional path", value: "http://example.test/certs/" + digest},
+		{name: "query", value: valid + "?"},
+		{name: "fragment", value: valid + "#"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got, err := ParseOffCardCertURL(test.value); !errors.Is(err, ErrInvalidResponse) || got != [32]byte{} {
+				t.Errorf("ParseOffCardCertURL = %x, %v, want ErrInvalidResponse", got, err)
+			}
+		})
+	}
+}
 
 func TestParseOffCardKeyHistoryFile(t *testing.T) {
 	// SEQUENCE OF { OCTET STRING keyReference, Certificate SEQUENCE }.

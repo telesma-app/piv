@@ -229,7 +229,7 @@ func TestOpenAndSequentialExchanges(t *testing.T) {
 
 func TestFailedOpenOwnership(t *testing.T) {
 	testCipherSuites(t, func(t *testing.T, suite cipherSuite) {
-		for _, mode := range []string{"encoding", "missing suite", "invalid suite", "unsupported", "rejected", "truncated", "truncated body", "control", "untrusted", "cryptogram"} {
+		for _, mode := range []string{"encoding", "missing suite", "invalid suite", "unsupported", "rejected", "truncated", "truncated body", "control", "untrusted", "identity", "cryptogram"} {
 			t.Run(mode, func(t *testing.T) {
 				p := newHandshakePeer(t, suite)
 				parameters := p.parameters()
@@ -279,6 +279,23 @@ func TestFailedOpenOwnership(t *testing.T) {
 				case "untrusted":
 					parameters.Trust.IssuerID[0] ^= 1
 					invalidates = true
+				case "identity":
+					p.handshake = func(r iso7816.Response) iso7816.Response {
+						_, _, cert, err := parseEstablishmentResponse(suite, r.Data)
+						if err != nil {
+							t.Fatal(err)
+						}
+
+						subject := bytes.Index(cert, []byte{0x5f, 0x20, 16})
+						if subject < 0 {
+							t.Fatal("missing CVC subject fixture")
+						}
+
+						cert[subject+3] ^= 1
+
+						return r
+					}
+					invalidates = true
 				case "cryptogram":
 					p.handshake = func(r iso7816.Response) iso7816.Response {
 						nonce, cryptogram, cert, err := parseEstablishmentResponse(suite, r.Data)
@@ -298,9 +315,9 @@ func TestFailedOpenOwnership(t *testing.T) {
 					invalidates = true
 				}
 
-				_, err := Open(t.Context(), p, parameters)
-				if err == nil {
-					t.Fatal("Open succeeded")
+				channel, err := Open(t.Context(), p, parameters)
+				if channel != nil || err == nil {
+					t.Fatalf("Open = %v, %v, want no channel", channel, err)
 				}
 
 				wantRequests := 2
